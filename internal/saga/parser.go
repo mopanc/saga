@@ -29,9 +29,9 @@ type Topic struct {
 }
 
 type TopicReference struct {
-	Path      string `yaml:"path"`
-	Lines     string `yaml:"lines,omitempty"`
-	BlameHash string `yaml:"blame_hash"`
+	Path      string `yaml:"path" json:"path"`
+	Lines     string `yaml:"lines,omitempty" json:"lines,omitempty"`
+	BlameHash string `yaml:"blame_hash" json:"blame_hash"`
 }
 
 var frontmatterDelim = []byte("---\n")
@@ -59,7 +59,10 @@ func ParseTopic(content []byte) (*Topic, error) {
 	if err := yaml.Unmarshal(rest[:end], &t); err != nil {
 		return nil, fmt.Errorf("yaml: %w", err)
 	}
-	t.Body = strings.TrimLeft(string(rest[end+len(frontmatterDelim):]), "\n")
+	body := string(rest[end+len(frontmatterDelim):])
+	body = strings.TrimLeft(body, "\n")
+	body = strings.TrimRight(body, "\n")
+	t.Body = body
 
 	if t.ID == "" {
 		return nil, fmt.Errorf("frontmatter missing required field: id")
