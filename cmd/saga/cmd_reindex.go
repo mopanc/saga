@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/jorgemorais/saga/internal/saga"
+	"github.com/mopanc/saga/internal/saga"
 )
 
 func runReindex(args []string) error {

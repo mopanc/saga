@@ -10,8 +10,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/jorgemorais/saga/internal/mcp"
-	"github.com/jorgemorais/saga/internal/saga"
+	"github.com/mopanc/saga/internal/mcp"
+	"github.com/mopanc/saga/internal/saga"
 )
 
 func runMCP(args []string) error {

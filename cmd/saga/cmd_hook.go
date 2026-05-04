@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/jorgemorais/saga/internal/saga"
+	"github.com/mopanc/saga/internal/saga"
 )
 
 const hookTopK = 3

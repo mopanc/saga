@@ -14,7 +14,7 @@ Pré-requisito: Go ≥ 1.22.
 
 ```bash
 # Instalar (uma vez)
-go install github.com/jorgemorais/saga/cmd/saga@latest
+go install github.com/mopanc/saga/cmd/saga@latest
 # ou, do source: go build -o ~/bin/saga ./cmd/saga
 
 # Em cada projeto onde queres memória partilhada com a equipa:

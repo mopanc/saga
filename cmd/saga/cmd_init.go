@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/jorgemorais/saga/internal/saga"
+	"github.com/mopanc/saga/internal/saga"
 )
 
 const projectMetaTemplate = `scope: project:%s
@@ -18,7 +18,7 @@ notes_dir: topics/
 `
 
 const topicsKeep = `# Topic notes for this project live here.
-# Each .md file is one topic — see https://github.com/jorgemorais/saga
+# Each .md file is one topic — see https://github.com/mopanc/saga
 # for the format.
 `
 

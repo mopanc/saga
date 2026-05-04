@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/jorgemorais/saga/internal/saga"
+	"github.com/mopanc/saga/internal/saga"
 )
 
 const usage = `saga v%s — AI investigation memory
