@@ -1,67 +1,59 @@
-# Saga — Personal Memory MCP
+# Saga — AI Investigation Memory
 
-Camada de memória pessoal local-first, partilhada entre IAs (Claude, ChatGPT, Cursor, etc.) via MCP. O LLM faz o raciocínio; a Saga é a tua memória de longo prazo.
+Camada de conhecimento layered, local-first, partilhada entre IAs (Claude Code, Cursor, Windsurf, Antigravity) via MCP. Topic notes em markdown, indexadas por SQLite, sincronizadas via git. O LLM lê **e** mantém as notas — a próxima conversa começa com o que a anterior descobriu.
 
-**Estado:** Fase 1 em curso (loop mínimo validado).
+**Estado:** v2 em pivot. Branch `pivot/v2-go` — re-escrita Go a partir do scaffold inicial em TypeScript.
 
 ## Filosofia em três pontos
 
-1. **Invisibilidade é o produto.** O sistema só é bom se melhorar o raciocínio diário sem te obrigar a pensar nele.
-2. **Taxonomia emerge dos dados, não do whiteboard.** Semana 1 é texto raw + tags livres; a estrutura aparece a partir de uso real.
-3. **Local-first, soberania total.** SQLite no teu disco, zero cloud por default, export portável JSON sempre disponível.
+1. **Investigation memory, não knowledge dump.** A unidade é a *topic note* curada (~500 palavras, auto-contida), não a frase indexada por BM25.
+2. **Layered scopes.** `personal | project | dept | org` — cada camada tem owner independente. Default escreve em `personal`; promoção para scopes mais altos é explícita.
+3. **Substrato sobre invenção.** git para sync/versionamento/ACL. SQLite para índice (regenerável). Markdown para fonte de verdade. Saga não inventa nenhum destes.
 
 ## Documentação
 
-- [Design](docs/DESIGN.md) — arquitectura, estrutura do projecto, modelo de dados, tools, decisões.
-- [Roadmap](docs/ROADMAP.md) — fases com o que cada uma resolve.
+- [DESIGN_v2.md](docs/DESIGN_v2.md) — spec actual (topic-grained RAG, layered scopes, Go).
+- [DESIGN.md](docs/DESIGN.md) — v1 histórica (memória de frases). Mantida para referência.
+- [ROADMAP.md](docs/ROADMAP.md) — v1 histórica. Roadmap revisto vive em `DESIGN_v2.md §17`.
 
-## Decisões fechadas
+## Stack (LOCKED)
 
-- **Stack:** TypeScript.
-- **Tenancy:** single-tenant — *"uma mente, um MCP"*.
-- **Embeddings:** BM25-only em Fase 1; em Fase 1.5, `EmbeddingProvider` swappable (Ollama default, API externa configurável).
-
-## Decisões em aberto
-
-- **Backfill Fase 4:** prioridade de adapters (Claude Code transcripts vs ChatGPT export vs Cursor) — adiada para Fase 4.
+| Componente | Escolha |
+|---|---|
+| Linguagem | Go 1.22+ |
+| MCP SDK | `github.com/modelcontextprotocol/go-sdk` (a integrar) |
+| SQLite | `modernc.org/sqlite` (puro Go, sem CGO) |
+| Vector (Phase 1.5) | `sqlite-vec` extension |
+| Embeddings (Phase 1.5) | Ollama local, `nomic-embed-text` |
 
 ## Quick start
 
-Pré-requisitos: Node ≥20, npm.
+Pré-requisitos: Go ≥ 1.22.
 
 ```bash
-npm install
-npm run build
-npm test
+go build ./...
+go test ./...
+
+# Smoke test
+go run ./cmd/saga version
+go run ./cmd/saga reindex
 ```
 
-Base de dados em `~/.saga/memory.db` por default. Override via `SAGA_DB_PATH`.
+Por default, dados em `~/.saga/`. Override via `SAGA_HOME`.
 
-### Integrar com o Claude Code
+## Layout
 
-Em `~/.claude/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "saga": {
-      "command": "node",
-      "args": ["/CAMINHO/ABSOLUTO/saga/packages/mcp/dist/index.js"]
-    }
-  },
-  "hooks": {
-    "UserPromptSubmit": [{
-      "hooks": [{
-        "type": "command",
-        "command": "node /CAMINHO/ABSOLUTO/saga/packages/mcp/dist/hook-recall.js"
-      }]
-    }]
-  }
-}
 ```
-
-O servidor MCP expõe duas tools (`remember`, `recall`). O hook injecta os top-3 snippets relevantes a cada prompt — sem teres de pedir.
+saga/
+├── cmd/
+│   ├── saga/          # CLI
+│   ├── saga-mcp/      # MCP stdio server
+│   └── saga-hook/     # Claude Code UserPromptSubmit hook
+├── internal/saga/     # core: DB, parser, retrieval, layers
+│   └── migrations/    # SQL embebido em binário
+└── docs/
+```
 
 ## Próximo passo
 
-`docs/ROADMAP.md` → Fase 1.5 (Embeddings) só dispara quando o BM25 falhar em casos reais.
+Implementar o resolver de layers (cwd → walk-up → meta.yml → inherits) e os tools MCP `recall`, `topic.read`, `topic.list`, `topic.write`. Ver `docs/DESIGN_v2.md §12-14`.

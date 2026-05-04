@@ -1,11 +1,29 @@
-node_modules/
-dist/
-*.tsbuildinfo
-.env
-.env.local
+# Go build artifacts
+/bin/
+/dist/
+*.test
+*.out
+coverage.html
+
+# Built binaries (top-level outputs of `go build`)
+/saga
+/saga-mcp
+/saga-hook
+
+# Saga local data
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
+
+# OS
 .DS_Store
-coverage/
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+
+# Environment
+.env
+.env.local
