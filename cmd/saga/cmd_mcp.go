@@ -1,13 +1,9 @@
-// saga-mcp — MCP stdio server for Saga.
-//
-// Exposes recall, topic_read, topic_list, topic_write tools to MCP clients
-// (Claude Code, Cursor, Windsurf, etc). Layer-aware: cwd at process start
-// determines which project layer (if any) is active alongside personal.
 package main
 
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -18,33 +14,35 @@ import (
 	"github.com/jorgemorais/saga/internal/saga"
 )
 
-func main() {
+func runMCP(args []string) error {
+	fs := flag.NewFlagSet("mcp", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "saga mcp — run as MCP stdio server. Invoked by AI clients (Claude Code, Cursor, etc); not normally run by hand.")
+	}
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
 	cfg, err := saga.LoadConfig()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "saga-mcp: config: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("config: %w", err)
 	}
 	db, err := saga.OpenDB(cfg.DBPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "saga-mcp: open db: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("open db: %w", err)
 	}
 	defer db.Close()
 
 	cwd, _ := os.Getwd()
 	svc := saga.NewService(db, cfg, cwd)
 
-	server := mcp.New("saga", saga.Version, sagaTools, dispatch(svc))
+	server := mcp.New("saga", saga.Version, sagaTools, dispatchTool(svc))
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	fmt.Fprintf(os.Stderr, "saga-mcp v%s — db=%s cwd=%s\n", saga.Version, cfg.DBPath, cwd)
-
-	if err := server.Serve(ctx, os.Stdin, os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "saga-mcp: %v\n", err)
-		os.Exit(1)
-	}
+	fmt.Fprintf(os.Stderr, "saga mcp v%s — db=%s cwd=%s\n", saga.Version, cfg.DBPath, cwd)
+	return server.Serve(ctx, os.Stdin, os.Stdout)
 }
 
 var sagaTools = []mcp.Tool{
@@ -113,7 +111,7 @@ var sagaTools = []mcp.Tool{
 	},
 }
 
-func dispatch(svc *saga.Service) mcp.Handler {
+func dispatchTool(svc *saga.Service) mcp.Handler {
 	return func(ctx context.Context, name string, args json.RawMessage) (mcp.Result, error) {
 		switch name {
 		case "recall":

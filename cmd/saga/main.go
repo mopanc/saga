@@ -1,8 +1,11 @@
-// saga — CLI for Saga.
+// saga — single-binary entrypoint with subcommands.
+//
+// All Saga functionality (CLI, MCP server, Claude hook, project init,
+// settings.json wiring) lives behind one binary. Distribution is one file;
+// users install with `go install ./cmd/saga` and that's it.
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
 
@@ -12,78 +15,54 @@ import (
 const usage = `saga v%s — AI investigation memory
 
 Usage:
-  saga <command>
+  saga <command> [options]
 
 Commands:
-  version     Print version
-  reindex     Rebuild SQLite index from markdown files in active layers
+  version          Print version
+  init             Initialise .saga/ in the current project
+  reindex          Rebuild SQLite index from markdown in active layers
+  mcp              Run MCP stdio server (invoked by AI clients)
+  hook             Run UserPromptSubmit hook (invoked by Claude Code)
+  setup-claude     Print Claude Code config snippet to wire saga in
+
+Run 'saga help <command>' for command-specific notes.
 `
 
 func main() {
-	flag.Usage = func() {
+	if len(os.Args) < 2 {
 		fmt.Fprintf(os.Stderr, usage, saga.Version)
-	}
-	flag.Parse()
-
-	args := flag.Args()
-	if len(args) == 0 {
-		flag.Usage()
 		os.Exit(2)
 	}
 
-	switch args[0] {
-	case "version":
+	cmd := os.Args[1]
+	args := os.Args[2:]
+
+	var err error
+	switch cmd {
+	case "version", "-v", "--version":
 		fmt.Printf("saga v%s\n", saga.Version)
-
+		return
+	case "help", "-h", "--help":
+		fmt.Fprintf(os.Stdout, usage, saga.Version)
+		return
+	case "init":
+		err = runInit(args)
 	case "reindex":
-		if err := runReindex(); err != nil {
-			fmt.Fprintf(os.Stderr, "saga reindex: %v\n", err)
-			os.Exit(1)
-		}
-
+		err = runReindex(args)
+	case "mcp":
+		err = runMCP(args)
+	case "hook":
+		err = runHook(args) // fail-silent internally; always returns nil
+	case "setup-claude":
+		err = runSetupClaude(args)
 	default:
-		fmt.Fprintf(os.Stderr, "saga: unknown command %q\n\n", args[0])
-		flag.Usage()
+		fmt.Fprintf(os.Stderr, "saga: unknown command %q\n\n", cmd)
+		fmt.Fprintf(os.Stderr, usage, saga.Version)
 		os.Exit(2)
 	}
-}
 
-func runReindex() error {
-	cfg, err := saga.LoadConfig()
 	if err != nil {
-		return fmt.Errorf("config: %w", err)
+		fmt.Fprintf(os.Stderr, "saga %s: %v\n", cmd, err)
+		os.Exit(1)
 	}
-	db, err := saga.OpenDB(cfg.DBPath)
-	if err != nil {
-		return fmt.Errorf("open db: %w", err)
-	}
-	defer db.Close()
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-
-	resolver := saga.NewResolver(cfg)
-	layers, err := resolver.Resolve(cwd)
-	if err != nil {
-		return fmt.Errorf("resolve layers: %w", err)
-	}
-
-	totalIndexed, totalFailed := 0, 0
-	for _, layer := range layers {
-		result, err := db.IndexLayer(layer)
-		if err != nil {
-			return fmt.Errorf("index %s: %w", layer.Scope, err)
-		}
-		fmt.Printf("%-20s indexed=%d failed=%d  (%s)\n",
-			layer.Scope, result.Indexed, result.Failed, layer.NotesDir)
-		for _, e := range result.Errors {
-			fmt.Fprintf(os.Stderr, "  ! %s: %v\n", e.File, e.Err)
-		}
-		totalIndexed += result.Indexed
-		totalFailed += result.Failed
-	}
-	fmt.Printf("done — %d layer(s), %d indexed, %d failed\n", len(layers), totalIndexed, totalFailed)
-	return nil
 }

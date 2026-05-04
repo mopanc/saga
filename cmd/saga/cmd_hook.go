@@ -1,23 +1,8 @@
-// saga-hook — Claude Code UserPromptSubmit hook.
-//
-// Reads the prompt event JSON from stdin, queries Saga for relevant topics
-// across active layers (personal + auto-discovered project), and emits a
-// <saga-context> block on stdout that Claude Code prepends to the prompt.
-//
-// Register in ~/.claude/settings.json:
-//
-//	"hooks": {
-//	  "UserPromptSubmit": [{
-//	    "hooks": [{ "type": "command", "command": "/abs/path/to/saga-hook" }]
-//	  }]
-//	}
-//
-// Failure policy: never block the prompt. Errors are logged to stderr; the
-// process exits 0 with no stdout output.
 package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -26,21 +11,32 @@ import (
 	"github.com/jorgemorais/saga/internal/saga"
 )
 
-const TopK = 3
+const hookTopK = 3
 
-type promptEvent struct {
+type hookEvent struct {
 	Prompt string `json:"prompt"`
 	Cwd    string `json:"cwd"`
 }
 
-func main() {
-	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "saga-hook: %v\n", err)
-		// exit 0 — fail-silent
+// runHook is the Claude Code UserPromptSubmit hook. Always returns nil
+// regardless of internal failure — never block the prompt on a hook fault.
+// Errors are logged to stderr.
+func runHook(args []string) error {
+	fs := flag.NewFlagSet("hook", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "saga hook — Claude Code UserPromptSubmit hook. Invoked by Claude Code with event JSON on stdin; not normally run by hand.")
 	}
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if err := runHookInner(); err != nil {
+		fmt.Fprintf(os.Stderr, "saga hook: %v\n", err)
+	}
+	return nil
 }
 
-func run() error {
+func runHookInner() error {
 	raw, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return fmt.Errorf("read stdin: %w", err)
@@ -49,8 +45,8 @@ func run() error {
 		return nil
 	}
 
-	var event promptEvent
-	_ = json.Unmarshal(raw, &event) // best-effort; fields default to ""
+	var event hookEvent
+	_ = json.Unmarshal(raw, &event)
 
 	if event.Prompt == "" {
 		return nil
@@ -71,19 +67,18 @@ func run() error {
 	defer db.Close()
 
 	svc := saga.NewService(db, cfg, cwd)
-	results, err := svc.Recall(saga.RecallArgs{Query: event.Prompt, K: TopK})
+	results, err := svc.Recall(saga.RecallArgs{Query: event.Prompt, K: hookTopK})
 	if err != nil {
 		return err
 	}
 	if len(results) == 0 {
 		return nil
 	}
-
-	emit(os.Stdout, results)
+	emitContext(os.Stdout, results)
 	return nil
 }
 
-func emit(w io.Writer, results []saga.TopicSnippet) {
+func emitContext(w io.Writer, results []saga.TopicSnippet) {
 	fmt.Fprintln(w, "<saga-context>")
 	for _, r := range results {
 		fmt.Fprintf(w, "<topic name=%q scope=%q confidence=%q file=%q>\n",
