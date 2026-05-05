@@ -7,7 +7,7 @@ import (
 
 func TestBuildIdentityBaseline_emptyReturnsEmpty(t *testing.T) {
 	svc, _ := setupServiceTest(t)
-	baseline, err := svc.BuildIdentityBaseline(400)
+	baseline, _, err := svc.BuildIdentityBaseline(400)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -26,7 +26,7 @@ func TestBuildIdentityBaseline_profileOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	baseline, err := svc.BuildIdentityBaseline(400)
+	baseline, _, err := svc.BuildIdentityBaseline(400)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestBuildIdentityBaseline_profileAndPreference(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	baseline, err := svc.BuildIdentityBaseline(1000)
+	baseline, _, err := svc.BuildIdentityBaseline(1000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestBuildIdentityBaseline_respectsTokenLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	baseline, err := svc.BuildIdentityBaseline(50) // ≈200 chars budget
+	baseline, _, err := svc.BuildIdentityBaseline(50) // ≈200 chars budget
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,11 +113,11 @@ func TestBuildIdentityBaseline_deterministic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	a, err := svc.BuildIdentityBaseline(400)
+	a, _, err := svc.BuildIdentityBaseline(400)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := svc.BuildIdentityBaseline(400)
+	b, _, err := svc.BuildIdentityBaseline(400)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestBuildIdentityBaseline_zeroMaxTokensUsesDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	baseline, err := svc.BuildIdentityBaseline(0)
+	baseline, _, err := svc.BuildIdentityBaseline(0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestBuildIdentityBaseline_ignoresOtherScopes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	baseline, err := svc.BuildIdentityBaseline(1000)
+	baseline, _, err := svc.BuildIdentityBaseline(1000)
 	if err != nil {
 		t.Fatal(err)
 	}

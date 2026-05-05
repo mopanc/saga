@@ -21,6 +21,7 @@ Commands:
   version          Print version
   init             Initialise .saga/ in the current project
   reindex          Rebuild SQLite index from markdown in active layers
+  lembrancas       List recent recall events from the index
   mcp              Run MCP stdio server (invoked by AI clients)
   hook             Run UserPromptSubmit hook (invoked by Claude Code)
   setup-claude     Print Claude Code config snippet to wire saga in
@@ -49,6 +50,8 @@ func main() {
 		err = runInit(args)
 	case "reindex":
 		err = runReindex(args)
+	case "lembrancas":
+		err = runLembrancas(args)
 	case "mcp":
 		err = runMCP(args)
 	case "hook":

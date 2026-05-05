@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/mopanc/saga/internal/mcp"
 	"github.com/mopanc/saga/internal/saga"
@@ -116,6 +117,22 @@ var sagaTools = []mcp.Tool{
 			"required": ["name", "body"]
 		}`),
 	},
+	{
+		Name: "lembranca_log",
+		Description: "Inspect Saga's recall history — what notes were brought to which conversation, " +
+			"when, by which mechanism (hook|recall|topic_read|baseline), and with what query. " +
+			"Useful for debugging ranking, finding cold notes that should be archived, and " +
+			"understanding which knowledge actually influences answers. Read-only.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"since": { "type": "number", "description": "Only entries with triggered_at >= this unix-ms timestamp." },
+				"kind":  { "type": "string", "enum": ["hook","recall","topic_read","baseline"], "description": "Filter by trigger kind." },
+				"topic": { "type": "string", "description": "Filter by topic title or topic id." },
+				"limit": { "type": "number", "description": "Maximum entries (default 50, max 1000).", "minimum": 1, "maximum": 1000 }
+			}
+		}`),
+	},
 }
 
 func dispatchTool(svc *saga.Service) mcp.Handler {
@@ -130,6 +147,13 @@ func dispatchTool(svc *saga.Service) mcp.Handler {
 			if err != nil {
 				return mcp.ErrorResult(err.Error()), nil
 			}
+			if len(results) > 0 {
+				ids := make([]string, len(results))
+				for i, r := range results {
+					ids[i] = r.ID
+				}
+				_ = svc.LogLembrancas(ids, saga.LembrancaKindRecall, p.Query)
+			}
 			return formatRecall(results), nil
 
 		case "topic_read":
@@ -141,7 +165,19 @@ func dispatchTool(svc *saga.Service) mcp.Handler {
 			if err != nil {
 				return mcp.ErrorResult(err.Error()), nil
 			}
+			_ = svc.LogLembrancas([]string{topic.ID}, saga.LembrancaKindTopicRead, p.Name)
 			return mcp.TextResult(formatTopic(topic)), nil
+
+		case "lembranca_log":
+			var p saga.LembrancaQueryArgs
+			if err := json.Unmarshal(args, &p); err != nil {
+				return mcp.ErrorResult("invalid arguments: " + err.Error()), nil
+			}
+			entries, err := svc.LembrancaLog(p)
+			if err != nil {
+				return mcp.ErrorResult(err.Error()), nil
+			}
+			return formatLembrancaLog(entries), nil
 
 		case "topic_list":
 			var p saga.TopicListArgs
@@ -216,6 +252,29 @@ func formatList(results []saga.TopicSummary) mcp.Result {
 	var b strings.Builder
 	for _, r := range results {
 		fmt.Fprintf(&b, "- [%s | %s] %s\n", r.Scope, r.Type, r.Title)
+	}
+	return mcp.TextResult(b.String())
+}
+
+func formatLembrancaLog(entries []saga.LembrancaEntry) mcp.Result {
+	if len(entries) == 0 {
+		return mcp.TextResult("No lembranças match the filter.")
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d lembranças (most recent first):\n\n", len(entries))
+	for _, e := range entries {
+		ts := time.UnixMilli(e.TriggeredAt).UTC().Format("2006-01-02 15:04:05Z")
+		title := e.TopicTitle
+		if title == "" {
+			title = "(deleted topic " + e.TopicID + ")"
+		}
+		fmt.Fprintf(&b, "- %s  [%-10s] %s\n", ts, e.Kind, title)
+		if e.Query != "" {
+			fmt.Fprintf(&b, "      query: %q\n", e.Query)
+		}
+		if e.Cwd != "" {
+			fmt.Fprintf(&b, "      cwd:   %s\n", e.Cwd)
+		}
 	}
 	return mcp.TextResult(b.String())
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -81,6 +82,13 @@ func (s *Service) Recall(args RecallArgs) ([]TopicSnippet, error) {
 		}
 	}
 
+	// Over-fetch by 3x so re-ranking with recency has enough candidates.
+	// SQL orders by BM25; Go re-orders by combined score; we then trim to k.
+	overfetch := k * 3
+	if overfetch < 10 {
+		overfetch = 10
+	}
+
 	placeholders := strings.Repeat("?,", len(scopes))
 	placeholders = placeholders[:len(placeholders)-1]
 	qArgs := []any{ftsQuery}
@@ -92,13 +100,15 @@ func (s *Service) Recall(args RecallArgs) ([]TopicSnippet, error) {
 		typeClause = " AND t.type = ?"
 		qArgs = append(qArgs, args.Type)
 	}
-	qArgs = append(qArgs, k)
+	qArgs = append(qArgs, overfetch)
 
 	sqlStr := fmt.Sprintf(`
 		SELECT t.id, t.scope, t.type, t.title, t.synonyms, t.file_path,
 		       t.source_layer, t.sensitivity, t.confidence,
 		       t.created_at, t.updated_at,
-		       bm25(topic_fts) AS score
+		       bm25(topic_fts) AS bm25_score,
+		       COALESCE((SELECT MAX(triggered_at) FROM lembranca l WHERE l.topic_id = t.id), 0)
+		         AS last_lembranca
 		FROM topic_fts
 		JOIN topic_index t ON t.id = topic_fts.id
 		WHERE topic_fts MATCH ? AND t.scope IN (%s)%s
@@ -112,23 +122,37 @@ func (s *Service) Recall(args RecallArgs) ([]TopicSnippet, error) {
 	}
 	defer rows.Close()
 
-	var results []TopicSnippet
+	now := time.Now().UnixMilli()
+	var candidates []TopicSnippet
 	for rows.Next() {
 		var snip TopicSnippet
 		var synJSON string
 		var bm25 float64
+		var lastLembranca int64
 		if err := rows.Scan(
 			&snip.ID, &snip.Scope, &snip.Type, &snip.Title, &synJSON,
 			&snip.FilePath, &snip.SourceLayer, &snip.Sensitivity, &snip.Confidence,
-			&snip.CreatedAt, &snip.UpdatedAt, &bm25,
+			&snip.CreatedAt, &snip.UpdatedAt, &bm25, &lastLembranca,
 		); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(synJSON), &snip.Synonyms)
-		snip.Score = -bm25 // bm25: lower=better; flip so higher=better
-		results = append(results, snip)
+		// bm25: lower=better; flip + add recency boost so higher=better.
+		snip.Score = -bm25 + recencyWeight(lastLembranca, now)
+		candidates = append(candidates, snip)
 	}
-	return results, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Re-rank by combined score (descending) and trim to k.
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].Score > candidates[j].Score
+	})
+	if len(candidates) > k {
+		candidates = candidates[:k]
+	}
+	return candidates, nil
 }
 
 // ----------------------------------------------------------------------------

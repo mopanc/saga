@@ -13,27 +13,30 @@ import (
 const DefaultBaselineMaxTokens = 400
 
 // BuildIdentityBaseline assembles a compact markdown block summarising the
-// user's identity from personal-layer profile and preference notes. The
-// result is what the hook injects on every prompt as <saga-identity>.
+// user's identity from personal-layer profile and preference notes. Returns:
+//   - the rendered baseline (empty string if no profile/preference notes)
+//   - the IDs of notes that contributed to the baseline (for lembrança logging)
+//   - error
 //
-// Returns an empty string if no profile/preference notes exist — callers
-// must treat this as "no baseline available", not as error. Iteration F
-// of the roadmap is what fills these notes; until then, this function
-// gracefully returns "" and the hook degrades to topic-only injection.
+// Empty result is not an error — callers treat as "no baseline available".
+// Iteration F populates the notes; until then this gracefully returns "" and
+// the hook degrades to topic-only injection.
 //
 // Token estimation is intentionally simple (~4 chars per token). Truncation
 // cuts at the nearest paragraph boundary above the limit, never mid-sentence.
-func (s *Service) BuildIdentityBaseline(maxTokens int) (string, error) {
+// Even when content is truncated, the IDs of all considered notes are
+// returned — they all "contributed", and we want their lembrança records.
+func (s *Service) BuildIdentityBaseline(maxTokens int) (string, []string, error) {
 	if maxTokens <= 0 {
 		maxTokens = DefaultBaselineMaxTokens
 	}
 
 	notes, err := s.notesByScopeAndType("personal", []string{"profile", "preference"})
 	if err != nil {
-		return "", fmt.Errorf("query personal notes: %w", err)
+		return "", nil, fmt.Errorf("query personal notes: %w", err)
 	}
 	if len(notes) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
 
 	var profiles, preferences []*Topic
@@ -60,8 +63,16 @@ func (s *Service) BuildIdentityBaseline(maxTokens int) (string, error) {
 		}
 	}
 
+	usedIDs := make([]string, 0, len(profiles)+len(preferences))
+	for _, t := range profiles {
+		usedIDs = append(usedIDs, t.ID)
+	}
+	for _, t := range preferences {
+		usedIDs = append(usedIDs, t.ID)
+	}
+
 	out := strings.TrimRight(sb.String(), "\n")
-	return truncateAtSection(out, maxTokens), nil
+	return truncateAtSection(out, maxTokens), usedIDs, nil
 }
 
 // notesByScopeAndType returns parsed Topic structs for the given scope and

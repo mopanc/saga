@@ -70,12 +70,13 @@ func runHookInner() error {
 
 	// F3 — always-on lens: identity baseline emitted for every prompt,
 	// independent of query. Empty when profile is empty (Iter F populates).
-	baseline, err := svc.BuildIdentityBaseline(cfg.BaselineMaxTokens)
+	baseline, baselineIDs, err := svc.BuildIdentityBaseline(cfg.BaselineMaxTokens)
 	if err != nil {
 		// Don't fail the hook on baseline error — prompt still flows through
 		// without identity context.
 		fmt.Fprintf(os.Stderr, "saga hook: baseline: %v\n", err)
 		baseline = ""
+		baselineIDs = nil
 	}
 
 	// Topic-relevance recall (existing F3.b path).
@@ -85,6 +86,20 @@ func runHookInner() error {
 	}
 
 	emitLensBlock(os.Stdout, baseline, results)
+
+	// Log lembranças for both injection paths. Best-effort — failures
+	// are silent; we never block the prompt on logging issues.
+	if len(baselineIDs) > 0 {
+		_ = svc.LogLembrancas(baselineIDs, saga.LembrancaKindBaseline, "")
+	}
+	if len(results) > 0 {
+		ids := make([]string, len(results))
+		for i, r := range results {
+			ids[i] = r.ID
+		}
+		_ = svc.LogLembrancas(ids, saga.LembrancaKindHook, event.Prompt)
+	}
+
 	return nil
 }
 
