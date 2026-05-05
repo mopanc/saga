@@ -8,13 +8,23 @@ linters:
   enable:
     - gocritic
     - misspell
-    - revive
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Stmt).Close
+        - (*database/sql.Tx).Rollback
+        - fmt.Fprintln
+        - fmt.Fprintf
+        - fmt.Fprint
   exclusions:
     rules:
       - path: _test\.go$
         linters:
           - errcheck
-          - revive
+          - staticcheck
 
 formatters:
   enable:

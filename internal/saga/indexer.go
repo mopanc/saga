@@ -96,7 +96,8 @@ func (db *DB) indexFile(path string, layer Layer) error {
 		return err
 	}
 
-	if _, err := tx.Exec(`
+	if _, err := tx.Exec(
+		`
 		INSERT INTO topic_index (
 			id, scope, type, title, synonyms, sensitivity, confidence,
 			file_path, file_hash, source_layer, created_at, updated_at

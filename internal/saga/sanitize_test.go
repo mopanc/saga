@@ -11,7 +11,7 @@ func TestSanitizeFTSQuery(t *testing.T) {
 		{"x*y(z)", `"x" OR "y" OR "z"`},
 		{"***", ""},
 		{"", ""},
-		{"AND not OR NEAR", ""},      // all keywords dropped
+		{"AND not OR NEAR", ""}, // all keywords dropped
 		{"go AND saga", `"go" OR "saga"`},
 		{"  spaces   ", `"spaces"`},
 		{"memória", `"memória"`}, // unicode letters preserved

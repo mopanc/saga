@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode"
 
+	"golang.org/x/text/runes"
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
 	"gopkg.in/yaml.v3"
@@ -39,9 +40,7 @@ func (t *Topic) Render() ([]byte, error) {
 // downcasing, so "Memória" → "memoria" rather than "mria".
 // Multiple non-alphanumeric runs collapse to a single hyphen.
 func Slugify(name string) string {
-	t := transform.Chain(norm.NFD, transform.RemoveFunc(func(r rune) bool {
-		return unicode.Is(unicode.Mn, r)
-	}))
+	t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)))
 	decomposed, _, _ := transform.String(t, name)
 	decomposed = strings.ToLower(decomposed)
 
