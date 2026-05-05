@@ -1,0 +1,76 @@
+name: Bug report
+description: Report a bug in Saga
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in as much detail as you can.
+        For security vulnerabilities, **do not** use this form — see [SECURITY.md](../../SECURITY.md).
+
+  - type: input
+    id: version
+    attributes:
+      label: Saga version
+      description: Output of `saga version`
+      placeholder: "v1.0.0-beta.1"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS and version
+      placeholder: "macOS 14.5 (arm64) / Ubuntu 22.04 / Windows 11"
+    validations:
+      required: true
+
+  - type: input
+    id: go-version
+    attributes:
+      label: Go version
+      description: Output of `go version` (only required if installing from source)
+      placeholder: "go1.22.5"
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`saga doctor` output"
+      description: Run `saga doctor` and paste the full output.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to reproduce the bug.
+      placeholder: |
+        1. Run `saga init`
+        2. Run `saga reindex`
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: What actually happened. Include error messages and stack traces if relevant.
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Anything else relevant — screenshots, related issues, MCP client used, etc.
