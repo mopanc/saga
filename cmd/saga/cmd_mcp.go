@@ -48,10 +48,13 @@ func runMCP(args []string) error {
 var sagaTools = []mcp.Tool{
 	{
 		Name: "recall",
-		Description: "Search Saga's topic notes for relevant snippets across active layers " +
-			"(personal + project). Use BEFORE answering questions about the user's preferences, " +
-			"ongoing investigations, project architecture, or any context the conversation might " +
-			"lack. Returns top-k matching topics ranked by FTS5 relevance.",
+		Description: "Search Saga's notes for SPECIFIC topics or investigations across active " +
+			"layers (personal + project). NOTE: the user's identity, preferences and policies " +
+			"are ALREADY injected automatically as <saga-identity> on every prompt — do NOT " +
+			"use recall to discover who the user is or how they like to work; that context is " +
+			"already in your prompt. Use recall ONLY for specific topics (architectures, " +
+			"debugging, investigations, design decisions) the conversation might need. Returns " +
+			"top-k matching topics ranked by FTS5 relevance.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -89,11 +92,15 @@ var sagaTools = []mcp.Tool{
 	},
 	{
 		Name: "topic_write",
-		Description: "Save or update a topic note. Default scope=personal (private to the user). " +
-			"Use whenever you've done substantial investigation that future conversations should " +
-			"not have to redo — architecture findings, debugging conclusions, validated " +
-			"hypotheses. Append-mode by default if the topic exists; the new content is added " +
-			"under a dated section.",
+		Description: "Save or update a Saga note. Default scope=personal (private to the user). " +
+			"Use whenever you've done substantial investigation or learned something durable " +
+			"that future conversations should not have to redo. Use type='topic' for " +
+			"investigations / architecture / debugging conclusions; type='profile' for durable " +
+			"facts about who the user is; type='preference' for how they like to be " +
+			"communicated with; type='policy' for rules they want followed (commit style, " +
+			"branching, code conventions). Profile and preference notes are injected " +
+			"automatically into every prompt as <saga-identity>. Append-mode by default if " +
+			"the named note exists; new content is added under a dated section.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {

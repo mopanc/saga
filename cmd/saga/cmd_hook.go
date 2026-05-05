@@ -67,18 +67,43 @@ func runHookInner() error {
 	defer db.Close()
 
 	svc := saga.NewService(db, cfg, cwd)
+
+	// F3 — always-on lens: identity baseline emitted for every prompt,
+	// independent of query. Empty when profile is empty (Iter F populates).
+	baseline, err := svc.BuildIdentityBaseline(cfg.BaselineMaxTokens)
+	if err != nil {
+		// Don't fail the hook on baseline error — prompt still flows through
+		// without identity context.
+		fmt.Fprintf(os.Stderr, "saga hook: baseline: %v\n", err)
+		baseline = ""
+	}
+
+	// Topic-relevance recall (existing F3.b path).
 	results, err := svc.Recall(saga.RecallArgs{Query: event.Prompt, K: hookTopK})
 	if err != nil {
 		return err
 	}
-	if len(results) == 0 {
-		return nil
-	}
-	emitContext(os.Stdout, results)
+
+	emitLensBlock(os.Stdout, baseline, results)
 	return nil
 }
 
-func emitContext(w io.Writer, results []saga.TopicSnippet) {
+// emitLensBlock writes the two-section context Claude Code prepends to the
+// prompt. <saga-identity> is emitted whenever there is a non-empty baseline;
+// <saga-context> is emitted whenever there are query-matched topics. Either
+// or both may be present; if both are absent, nothing is written and the
+// prompt passes through unchanged.
+func emitLensBlock(w io.Writer, baseline string, results []saga.TopicSnippet) {
+	if baseline != "" {
+		fmt.Fprintln(w, "<saga-identity>")
+		fmt.Fprintln(w, baseline)
+		fmt.Fprintln(w, "</saga-identity>")
+	}
+
+	if len(results) == 0 {
+		return
+	}
+
 	fmt.Fprintln(w, "<saga-context>")
 	for _, r := range results {
 		fmt.Fprintf(w, "<topic name=%q scope=%q confidence=%q file=%q>\n",
