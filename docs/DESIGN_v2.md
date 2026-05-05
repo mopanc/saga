@@ -570,3 +570,35 @@ Para evitar scope creep — Saga **não faz** nem fará:
 - LLM próprio. A inteligência vem dos clientes MCP.
 
 A ausência destes itens não é esquecimento — é disciplina.
+
+## 20. Divergências face ao COGNITIVE_MODEL (a alinhar pós-Iter 1 e 2)
+
+Este documento (DESIGN_v2) foi escrito antes do `COGNITIVE_MODEL.md`. Os pontos abaixo identificam onde precisa de update — não os corrige aqui (evitar churn em doc grande); cada um vai ser resolvido no commit que implementa a feature correspondente.
+
+### §6 Tipologia — re-equilibrar peso entre tipos
+
+A tabela actual lista `profile | preference | policy | topic` com 4 linhas equivalentes. **A realidade pós-pivot é que `profile` é coluna vertebral**, não tipo entre quatro. Update após Iter 1: nota explícita que `profile` (+ `preference`) é injectado *sempre* via baseline; `policy`/`topic` injectados *condicionalmente* via match. Adicionar tipo `skill` como Iter 6 (conditional, via T3.3).
+
+### §11 Schema SQLite — falta tabela `lembranca`
+
+O schema actual cobre `topic_index` + `topic_fts` + `topic_reference`. Falta `lembranca` (camada episódica L2). Adicionada na migration `002_lembrancas.sql` em Iter 2. Update do §11: incluir tabela completa, índices, FK em cascade para `topic_index`.
+
+### §13 Fluxo de read — não menciona baseline always-on
+
+O diagrama actual descreve resolver → reader → merger → formatter, mas o reader busca apenas tópicos que batem na query. **Falta o passo `BuildIdentityBaseline` que injecta sempre profile + preferences**, independente da query. Update após Iter 1: separar fluxo em 2 andares — *(a) baseline build (always)*, *(b) topic match (query-relevant)*.
+
+### §15 Stale invalidation — alinhar com lembranças
+
+A definição de "stale" actual é via `git blame` hash. **Adicionar segunda dimensão: notas com `last_lembrança_at` muito antigo (≥6 meses) são candidatas a archive**, mesmo que o git blame ainda bata. Update após Iter 2 + 4+: campo derivado `last_lembrança_at` no `topic_index` (computado de `lembranca`).
+
+### §17 Roadmap — substituído por PLAN.md + ROADMAP_v2.md
+
+A secção §17 lista Phases 1, 1.5, 2, 3, 4, 5+. **Está desactualizada** — `PLAN.md` e `ROADMAP_v2.md` são agora autoritários, com iterações alinhadas ao modelo cognitivo. Update: substituir §17 por uma só linha apontando para `PLAN.md`/`ROADMAP_v2.md`. Manter §17 actual num apêndice como "v1 roadmap, histórico".
+
+### Linguagem geral — "memory" vs "lens"
+
+Várias referências (README, MCP tool descriptions, §1 visão) falam de Saga como "memory layer". O modelo cognitivo prefere "lens" — *Saga é a lente que torna a IA tua, não memória que ela consulta*. Update transversal após Iter 1: substituir "memory" por "lens" em strings user-facing.
+
+---
+
+**Política:** estas divergências são **conhecidas e aceites**. Não bloqueiam Iters 1 e 2. Cada uma é resolvida no commit da iteração correspondente, com referência explícita a este §20.
