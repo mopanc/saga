@@ -1,0 +1,50 @@
+run:
+  timeout: 5m
+  go: "1.22"
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - gosec
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gofumpt
+    - gocritic
+    - misspell
+    - revive
+
+linters-settings:
+  gosec:
+    excludes:
+      # G115 — integer overflow conversion (noisy with FTS5/SQLite size constants)
+      - G115
+  gocritic:
+    enabled-tags:
+      - performance
+      - style
+      - diagnostic
+    disabled-checks:
+      - whyNoLint  # we don't require justification for nolint directives in this repo
+  revive:
+    rules:
+      - name: var-naming
+      - name: indent-error-flow
+      - name: errorf
+      - name: blank-imports
+
+issues:
+  exclude-dirs:
+    - vendor
+    - testdata
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosec
+        - revive
+  max-issues-per-linter: 0
+  max-same-issues: 0
