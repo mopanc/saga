@@ -68,6 +68,12 @@ func runHookInner() error {
 
 	svc := saga.NewService(db, cfg, cwd)
 
+	noteCount, err := svc.CountTopics()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "saga hook: count: %v\n", err)
+		noteCount = -1
+	}
+
 	// F3 — always-on lens: identity baseline emitted for every prompt,
 	// independent of query. Empty when profile is empty (Iter F populates).
 	baseline, baselineIDs, err := svc.BuildIdentityBaseline(cfg.BaselineMaxTokens)
@@ -85,7 +91,7 @@ func runHookInner() error {
 		return err
 	}
 
-	emitLensBlock(os.Stdout, baseline, results)
+	emitLensBlock(os.Stdout, cfg, noteCount, baseline, results)
 
 	// Log lembranças for both injection paths. Best-effort — failures
 	// are silent; we never block the prompt on logging issues.
@@ -103,12 +109,18 @@ func runHookInner() error {
 	return nil
 }
 
-// emitLensBlock writes the two-section context Claude Code prepends to the
-// prompt. <saga-identity> is emitted whenever there is a non-empty baseline;
-// <saga-context> is emitted whenever there are query-matched topics. Either
-// or both may be present; if both are absent, nothing is written and the
-// prompt passes through unchanged.
-func emitLensBlock(w io.Writer, baseline string, results []saga.TopicSnippet) {
+// emitLensBlock writes the three-section context Claude Code prepends to the
+// prompt:
+//   - <saga-meta> always — bootstraps a fresh session even when saga is empty.
+//     Tells the model the saga is wired in, what tools it exposes, and when
+//     to call topic_write. Without this, an empty saga produces no signal at
+//     all and the model has no way to discover that saga exists.
+//   - <saga-identity> when there is a non-empty baseline (profile/preference
+//     notes exist).
+//   - <saga-context> when there are query-matched topics.
+func emitLensBlock(w io.Writer, cfg *saga.Config, noteCount int, baseline string, results []saga.TopicSnippet) {
+	emitMetaBlock(w, cfg, noteCount)
+
 	if baseline != "" {
 		fmt.Fprintln(w, "<saga-identity>")
 		fmt.Fprintln(w, baseline)
@@ -133,6 +145,31 @@ func emitLensBlock(w io.Writer, baseline string, results []saga.TopicSnippet) {
 		fmt.Fprintln(w, "</topic>")
 	}
 	fmt.Fprintln(w, "</saga-context>")
+}
+
+// emitMetaBlock writes the bootstrap <saga-meta> block. Cheap (~80 tokens),
+// emitted on every prompt so the model never has to guess whether saga is
+// available. When the saga has notes, it still adds value — the count and
+// tool list anchor the model's expectations.
+func emitMetaBlock(w io.Writer, cfg *saga.Config, noteCount int) {
+	dbPath := ""
+	if cfg != nil {
+		dbPath = cfg.DBPath
+	}
+	countStr := fmt.Sprintf("%d notes", noteCount)
+	if noteCount < 0 {
+		countStr = "note count unavailable"
+	}
+	state := ""
+	if noteCount == 0 {
+		state = " (empty — populate via topic_write when the user shares durable info about themselves, their projects, decisions, or preferences)"
+	}
+
+	fmt.Fprintln(w, "<saga-meta>")
+	fmt.Fprintf(w, "saga v%s wired in. db=%s, %s%s\n", saga.Version, dbPath, countStr, state)
+	fmt.Fprintln(w, "tools: mcp__saga__topic_write, mcp__saga__recall, mcp__saga__topic_read, mcp__saga__topic_list, mcp__saga__lembranca_log")
+	fmt.Fprintln(w, "use topic_write (type=profile|preference|policy|topic, default scope=personal) to persist anything future sessions should not have to rediscover; use recall before doing investigation already covered by an existing note")
+	fmt.Fprintln(w, "</saga-meta>")
 }
 
 func readBody(path string) (string, error) {

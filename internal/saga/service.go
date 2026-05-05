@@ -451,3 +451,14 @@ func scopeNames(layers []Layer) []string {
 	}
 	return out
 }
+
+// CountTopics returns the total number of indexed topic notes across all
+// scopes. Used by the always-on hook to emit a stable <saga-meta> bootstrap
+// block — sessions need to know the saga is wired in even when it is empty.
+func (s *Service) CountTopics() (int, error) {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM topic_index`).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}

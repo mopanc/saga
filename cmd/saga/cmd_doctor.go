@@ -186,45 +186,59 @@ func checkClaudeWiring() []check {
 	if err != nil {
 		return []check{{status: statusFail, label: "cannot resolve user home", detail: err.Error()}}
 	}
-	settingsPath := filepath.Join(home, ".claude", "settings.json")
+
+	// MCP server lives in ~/.claude.json (managed by `claude mcp add`).
+	// The hook lives in ~/.claude/settings.json. Different files; both required.
+	results = append(results, checkMCPRegistration(filepath.Join(home, ".claude.json"))...)
+	results = append(results, checkHookRegistration(filepath.Join(home, ".claude", "settings.json"))...)
+	return results
+}
+
+func checkMCPRegistration(claudeJSONPath string) []check {
+	data, err := os.ReadFile(claudeJSONPath)
+	if err != nil {
+		return []check{{
+			status: statusFail,
+			label:  claudeJSONPath + " not present",
+			fix:    "install Claude Code, then run `saga setup-claude --apply` (or the printed `claude mcp add ...` command)",
+		}}
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return []check{{
+			status: statusFail,
+			label:  ".claude.json is not valid JSON",
+			detail: err.Error(),
+		}}
+	}
+	if mcps, ok := cfg["mcpServers"].(map[string]any); ok {
+		if _, found := mcps["saga"]; found {
+			return []check{{status: statusOK, label: "saga MCP server registered (~/.claude.json)"}}
+		}
+	}
+	return []check{{
+		status: statusFail,
+		label:  "saga MCP server not registered",
+		fix:    "run `saga setup-claude --apply`, or manually:\n  claude mcp add saga -s user -- $(which saga) mcp",
+	}}
+}
+
+func checkHookRegistration(settingsPath string) []check {
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
 		return []check{{
 			status: statusWarn,
 			label:  settingsPath + " not present",
-			fix:    "run `saga setup-claude` and paste the snippet into the file",
+			fix:    "run `saga setup-claude` and paste the hooks snippet into the file",
 		}}
 	}
-	results = append(results, check{
-		status: statusOK,
-		label:  fmt.Sprintf("%s present (%d bytes)", settingsPath, len(data)),
-	})
-
 	var cfg map[string]any
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return append(results, check{
+		return []check{{
 			status: statusFail,
 			label:  "settings.json is not valid JSON",
 			detail: err.Error(),
-		})
-	}
-
-	if mcps, ok := cfg["mcpServers"].(map[string]any); ok {
-		if _, found := mcps["saga"]; found {
-			results = append(results, check{status: statusOK, label: "saga MCP server configured"})
-		} else {
-			results = append(results, check{
-				status: statusFail,
-				label:  "mcpServers.saga missing",
-				fix:    "run `saga setup-claude` and merge the saga entry into mcpServers",
-			})
-		}
-	} else {
-		results = append(results, check{
-			status: statusFail,
-			label:  "mcpServers section missing",
-			fix:    "run `saga setup-claude` and merge the snippet",
-		})
+		}}
 	}
 
 	hooksOK := false
@@ -253,15 +267,13 @@ func checkClaudeWiring() []check {
 		}
 	}
 	if hooksOK {
-		results = append(results, check{status: statusOK, label: "UserPromptSubmit hook wired to saga"})
-	} else {
-		results = append(results, check{
-			status: statusFail,
-			label:  "UserPromptSubmit hook not wired",
-			fix:    "run `saga setup-claude` and merge the hooks block into ~/.claude/settings.json",
-		})
+		return []check{{status: statusOK, label: "UserPromptSubmit hook wired (~/.claude/settings.json)"}}
 	}
-	return results
+	return []check{{
+		status: statusFail,
+		label:  "UserPromptSubmit hook not wired",
+		fix:    "run `saga setup-claude` and merge the hooks block into ~/.claude/settings.json",
+	}}
 }
 
 func checkContent(cfg *saga.Config) []check {

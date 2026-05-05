@@ -84,7 +84,7 @@ Não é metáfora — é a topologia real:
 - `git pull` — sincronização cross-machine das layers
 
 **Output:**
-- `hook stdout` — bloco `<saga-identity>` + `<saga-context>` injectado no prompt
+- `hook stdout` — `<saga-meta>` (sempre) + `<saga-identity>` (se há profile/preferences) + `<saga-context>` (se há topic match) injectados no prompt
 - `MCP tools/call response` — resultados estruturados para a IA
 - `CLI stdout` — output humano-legível
 - `git push` — propagação cross-machine

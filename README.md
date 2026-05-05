@@ -53,12 +53,17 @@ saga doctor                     # diagnostica tudo o que falta
 ### 3. Wire no Claude Code (uma vez)
 
 ```bash
-saga setup-claude
+saga setup-claude --apply        # regista o MCP e imprime o snippet do hook
 ```
 
-Imprime o JSON para meteres em `~/.claude/settings.json` (faz merge com a config existente; **não substitui** outras `mcpServers` ou `hooks` que já tenhas).
+Saga tem dois pontos de integração e vivem em ficheiros diferentes:
 
-**Reinicia o Claude Code completamente (`Cmd+Q` + reabrir)** — settings.json só é lido em arranque.
+- **MCP server** → `~/.claude.json` (gerido pelo `claude mcp add`). Sem isto, as ferramentas `mcp__saga__*` não aparecem em sessão nenhuma.
+- **UserPromptSubmit hook** → `~/.claude/settings.json`. Sem isto, o saga não injecta contexto nos prompts.
+
+`--apply` corre `claude mcp add saga -s user -- $(which saga) mcp` por ti. O snippet do hook ainda tens de fazer merge à mão (não é seguro mexer no `settings.json` automaticamente — pode ter outros hooks/MCPs).
+
+**Reinicia o Claude Code completamente (`Cmd+Q` + reabrir)** — MCP servers e settings só são lidos em arranque.
 
 ### 4. Inicializar a Saga em cada projecto onde queres memória de equipa
 
@@ -79,7 +84,8 @@ saga doctor                     # devia mostrar tudo ✓
 
 A partir daqui, qualquer IA configurada com MCP recebe 5 tools (`recall`, `topic_read`, `topic_list`, `topic_write`, `lembranca_log`); o hook em Claude Code injecta automaticamente em cada prompt:
 
-- `<saga-identity>` — sempre, do profile + preferences pessoais
+- `<saga-meta>` — sempre, mesmo com saga vazio. Diz à IA que o saga existe, lista os tools, e quando chamar `topic_write`. Sem isto, uma sessão fresca não tem como descobrir que o saga está montado.
+- `<saga-identity>` — quando há profile/preference notes
 - `<saga-context>` — quando topic notes batem na query
 
 ## Subcomandos
@@ -92,7 +98,7 @@ A partir daqui, qualquer IA configurada com MCP recebe 5 tools (`recall`, `topic
 | `saga doctor` | Diagnostica instalação, config, e estado do conteúdo |
 | `saga mcp` | Corre como MCP stdio server (chamado por AI clients) |
 | `saga hook` | Hook UserPromptSubmit para Claude Code (recebe event JSON em stdin) |
-| `saga setup-claude` | Imprime o JSON para colares em `~/.claude/settings.json` |
+| `saga setup-claude` | Wire no Claude Code (MCP via `claude mcp add` + hook em `settings.json`); usa `--apply` para registar o MCP automaticamente |
 | `saga version` | Imprime versão |
 | `saga help` | Lista comandos |
 
@@ -122,8 +128,11 @@ Tipicamente o IDE (Cursor / VS Code / Antigravity) abre login shell que lê `.zp
 **Hook não dispara depois de configurar settings.json.**
 O Claude Code não recarrega settings em runtime. Tens que `Cmd+Q` e reabrir.
 
-**`saga doctor` diz "mcpServers section missing".**
-Não fizeste o merge do snippet do `setup-claude` no `~/.claude/settings.json`, ou substituíste em vez de fazer merge. Re-corre `setup-claude`, mete a config saga sem apagar outras.
+**`saga doctor` diz "saga MCP server not registered".**
+O Claude Code lê MCP servers de `~/.claude.json` (não de `~/.claude/settings.json`). Corre `saga setup-claude --apply` ou manualmente `claude mcp add saga -s user -- $(which saga) mcp`. Se o `claude` CLI não estiver no PATH, instala/repara o Claude Code primeiro.
+
+**`saga doctor` diz "UserPromptSubmit hook not wired".**
+Não fizeste o merge do snippet do hook no `~/.claude/settings.json`. Re-corre `saga setup-claude` e mete a secção `hooks` sem apagar outras que já tenhas.
 
 **`saga reindex` reporta `failed=N` em alguns ficheiros.**
 Frontmatter inválido em `.md` files. Corre `saga reindex` em modo verbose para ver paths exactos; abre o ficheiro e valida YAML.
