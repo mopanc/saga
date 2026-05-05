@@ -1,0 +1,4 @@
+scope: project:saga
+display_name: Saga
+write_policy: direct
+notes_dir: topics/

@@ -16,6 +16,10 @@ coverage.html
 *.db-wal
 *.db-shm
 
+# Saga sensitive project-layer topics — keep out of public repo
+# (e.g., security audit findings, internal release plans)
+.saga/topics/security-*.md
+
 # OS
 .DS_Store
 Thumbs.db
