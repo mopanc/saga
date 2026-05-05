@@ -8,26 +8,79 @@ Camada de conhecimento layered, local-first, partilhada entre IAs (Claude Code, 
 2. **Layered scopes.** `personal | project | dept | org` — cada camada tem owner independente. Default escreve em `personal`; promoção para scopes mais altos é explícita.
 3. **Substrato sobre invenção.** git para sync/versionamento/ACL. SQLite para índice (regenerável). Markdown para fonte de verdade. Saga não inventa nenhum destes.
 
+## Os dois sítios onde os dados vivem
+
+A separação é simples e ortogonal — vale a pena fixar:
+
+```
+~/go/bin/saga                    BINÁRIO   global, uma instalação
+~/.saga/personal/                DADOS     teus pessoais (privados, teu git)
+<projeto>/.saga/                 DADOS     do projecto (parte do git do projecto)
+```
+
+- **Personal layer** (`~/.saga/personal/`) — identidade, preferências, política, tópicos pessoais. Auto-criada na 1ª invocação. Sincronizas com **TEU** git remote privado. Visível em qualquer projecto.
+- **Project layer** (`<projeto>/.saga/`) — tópicos sobre este código. Criada com `saga init`. Faz parte do git do projecto, viaja com ele. Activa só quando estás cd'd dentro.
+- **Resolução automática:** o hook olha para `cwd`, faz walk-up para `.saga/meta.yml`, junta com personal. Mudas de projecto, project muda; personal fica.
+
 ## Quick start
 
 Pré-requisito: Go ≥ 1.22.
 
+### 1. Instalar (uma vez)
+
+Repositório actualmente privado, então instala a partir do clone local:
+
 ```bash
-# Instalar (uma vez)
-go install github.com/mopanc/saga/cmd/saga@latest
-# ou, do source: go build -o ~/bin/saga ./cmd/saga
-
-# Em cada projeto onde queres memória partilhada com a equipa:
-cd ~/code/acme-platform
-saga init                        # cria .saga/meta.yml + .saga/topics/
-
-# Wire no Claude Code (uma vez):
-saga setup-claude                # imprime snippet para ~/.claude/settings.json
+git clone git@github.com:mopanc/saga.git
+cd saga
+git checkout pivot/v2-go        # branch de desenvolvimento actual
+go install ./cmd/saga
 ```
 
-`saga init` detecta o nome do projeto a partir do `git rev-parse --show-toplevel` (fallback: basename do cwd). Depois disso, qualquer IA com MCP que aponte para `saga mcp` ganha as 4 tools (`recall`, `topic_read`, `topic_list`, `topic_write`); o hook em Claude Code injecta automaticamente os top-3 tópicos relevantes a cada prompt.
+(Quando o repo for público, `go install github.com/mopanc/saga/cmd/saga@latest` passa a funcionar directo.)
 
-Por default, índice + personal layer em `~/.saga/`. Override via `SAGA_HOME`.
+### 2. Garantir que o PATH inclui `~/go/bin`
+
+```bash
+echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.zshrc
+echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.zprofile  # cobre também IDE terminals
+source ~/.zshrc
+saga doctor                     # diagnostica tudo o que falta
+```
+
+`saga doctor` é a tua bússola — corre em qualquer máquina e diz-te exactamente o que está montado, o que falta, e como corrigir cada coisa.
+
+### 3. Wire no Claude Code (uma vez)
+
+```bash
+saga setup-claude
+```
+
+Imprime o JSON para meteres em `~/.claude/settings.json` (faz merge com a config existente; **não substitui** outras `mcpServers` ou `hooks` que já tenhas).
+
+**Reinicia o Claude Code completamente (`Cmd+Q` + reabrir)** — settings.json só é lido em arranque.
+
+### 4. Inicializar a Saga em cada projecto onde queres memória de equipa
+
+```bash
+cd ~/code/acme-platform
+saga init                       # cria .saga/meta.yml + .saga/topics/
+git add .saga/ && git commit -m "init saga layer"
+git push                        # vai com o projecto
+```
+
+`saga init` detecta o nome do projecto via `git rev-parse --show-toplevel`. Personal layer é auto-criada na primeira invocação — não precisa de init manual.
+
+### 5. Validar
+
+```bash
+saga doctor                     # devia mostrar tudo ✓
+```
+
+A partir daqui, qualquer IA configurada com MCP recebe 5 tools (`recall`, `topic_read`, `topic_list`, `topic_write`, `lembranca_log`); o hook em Claude Code injecta automaticamente em cada prompt:
+
+- `<saga-identity>` — sempre, do profile + preferences pessoais
+- `<saga-context>` — quando topic notes batem na query
 
 ## Subcomandos
 
@@ -35,25 +88,62 @@ Por default, índice + personal layer em `~/.saga/`. Override via `SAGA_HOME`.
 |---|---|
 | `saga init` | Cria `.saga/meta.yml` + `.saga/topics/` no cwd |
 | `saga reindex` | Reconstrói o índice SQLite a partir dos `.md` das layers activas |
+| `saga lembrancas` | Lista eventos de recall recentes (filtros: `--since`, `--kind`, `--topic`) |
+| `saga doctor` | Diagnostica instalação, config, e estado do conteúdo |
 | `saga mcp` | Corre como MCP stdio server (chamado por AI clients) |
 | `saga hook` | Hook UserPromptSubmit para Claude Code (recebe event JSON em stdin) |
 | `saga setup-claude` | Imprime o JSON para colares em `~/.claude/settings.json` |
 | `saga version` | Imprime versão |
+| `saga help` | Lista comandos |
+
+## MCP tools (visíveis para qualquer IA)
+
+| Tool | Função |
+|---|---|
+| `recall` | Search FTS5 + BM25 + recency boost por scopes activos |
+| `topic_read` | Lê topic note inteira por nome (slug ou título) |
+| `topic_list` | Lista tópicos visíveis no scope actual |
+| `topic_write` | Cria/actualiza topic note (default scope=personal, modes: create/append/replace) |
+| `lembranca_log` | Inspecciona histórico de recall (filtros: since/kind/topic/limit) |
+
+## Variáveis de ambiente
+
+| Variável | Default | O que faz |
+|---|---|---|
+| `SAGA_HOME` | `~/.saga` | Localização do personal layer + index.db |
+| `SAGA_DB_PATH` | `$SAGA_HOME/index.db` | Override do path do índice |
+| `SAGA_BASELINE_MAX_TOKENS` | `400` | Limite de tokens injectados no `<saga-identity>` por prompt |
+
+## Troubleshooting
+
+**`saga: command not found` num terminal mas funciona noutro.**
+Tipicamente o IDE (Cursor / VS Code / Antigravity) abre login shell que lê `.zprofile` mas não `.zshrc`. Adiciona o export aos dois ficheiros (ver Quick Start §2).
+
+**Hook não dispara depois de configurar settings.json.**
+O Claude Code não recarrega settings em runtime. Tens que `Cmd+Q` e reabrir.
+
+**`saga doctor` diz "mcpServers section missing".**
+Não fizeste o merge do snippet do `setup-claude` no `~/.claude/settings.json`, ou substituíste em vez de fazer merge. Re-corre `setup-claude`, mete a config saga sem apagar outras.
+
+**`saga reindex` reporta `failed=N` em alguns ficheiros.**
+Frontmatter inválido em `.md` files. Corre `saga reindex` em modo verbose para ver paths exactos; abre o ficheiro e valida YAML.
 
 ## Documentação
 
-- [docs/DESIGN_v2.md](docs/DESIGN_v2.md) — spec actual (topic-grained RAG, layered scopes, Go).
-- [docs/DESIGN.md](docs/DESIGN.md) — v1 histórica (memória de frases). Mantida para referência.
-- [docs/ROADMAP.md](docs/ROADMAP.md) — v1 histórica. Roadmap revisto vive em `DESIGN_v2.md §17`.
+- [docs/DESIGN_v2.md](docs/DESIGN_v2.md) — arquitectura técnica (storage, MCP, SQL).
+- [docs/COGNITIVE_MODEL.md](docs/COGNITIVE_MODEL.md) — modelo cognitivo (5 camadas + 2 transversais), erros evitados, anti-creep.
+- [docs/PLAN.md](docs/PLAN.md) — iterações e testes de utilidade.
+- [docs/ROADMAP_v2.md](docs/ROADMAP_v2.md) — tasks granulares com critérios e esforço.
+- [docs/DESIGN.md](docs/DESIGN.md) + [docs/ROADMAP.md](docs/ROADMAP.md) — v1 histórica, mantidas para referência.
 
 ## Stack (LOCKED)
 
 | Componente | Escolha |
 |---|---|
 | Linguagem | Go 1.22+ |
-| MCP transport | JSON-RPC 2.0 stdio (implementação interna em `internal/mcp/`) |
-| SQLite | `modernc.org/sqlite` (puro Go, sem CGO) |
-| Vector (Phase 1.5) | `sqlite-vec` extension |
+| MCP transport | JSON-RPC 2.0 stdio (implementação interna em `internal/mcp/`, ~200 LOC) |
+| SQLite | `modernc.org/sqlite` (puro Go, sem CGO; cross-compile trivial) |
+| Vector (Phase 1.5) | `sqlite-vec` extension (carregado lazy; `embedding BLOB` reservado desde dia 1) |
 | Embeddings (Phase 1.5) | Ollama local, `nomic-embed-text` |
 
 ## Layout
@@ -62,9 +152,9 @@ Por default, índice + personal layer em `~/.saga/`. Override via `SAGA_HOME`.
 saga/
 ├── cmd/saga/                  # single binary, subcomandos em cmd_*.go
 ├── internal/
-│   ├── saga/                  # core: parser, indexer, layers, service
+│   ├── saga/                  # core: parser, indexer, layers, service, baseline, lembrança
 │   │   └── migrations/*.sql   # schema embedded em binário
-│   └── mcp/                   # JSON-RPC 2.0 stdio server (~200 LOC)
+│   └── mcp/                   # JSON-RPC 2.0 stdio server
 └── docs/
 ```
 
@@ -72,8 +162,8 @@ saga/
 
 ```bash
 go build ./...      # compila tudo
-go test ./...       # corre testes (39 actuais)
+go test ./...       # corre testes (55 actuais)
 go run ./cmd/saga version
 ```
 
-Branch principal de desenvolvimento neste momento: `pivot/v2-go`.
+Branch principal de desenvolvimento: `pivot/v2-go` (até v2 fazer merge para `main`).
