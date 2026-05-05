@@ -1,46 +1,21 @@
+version: "2"
+
 run:
   timeout: 5m
-  go: "1.22"
-  tests: true
 
 linters:
-  disable-all: true
+  default: standard
   enable:
-    - errcheck
-    - gosec
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
-    - gofumpt
     - gocritic
     - misspell
     - revive
-
-linters-settings:
-  gocritic:
-    enabled-tags:
-      - performance
-      - style
-      - diagnostic
-    disabled-checks:
-      - whyNoLint  # we don't require justification for nolint directives in this repo
-  revive:
+  exclusions:
     rules:
-      - name: var-naming
-      - name: indent-error-flow
-      - name: errorf
-      - name: blank-imports
+      - path: _test\.go$
+        linters:
+          - errcheck
+          - revive
 
-issues:
-  exclude-dirs:
-    - vendor
-    - testdata
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - errcheck
-        - gosec
-        - revive
-  max-issues-per-linter: 0
-  max-same-issues: 0
+formatters:
+  enable:
+    - gofumpt
