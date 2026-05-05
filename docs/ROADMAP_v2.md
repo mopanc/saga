@@ -14,55 +14,33 @@
 
 ---
 
-## Iteration 0 — Ground truth
+## Princípio de ordenação: máquina antes da alimentação
 
-**Objectivo:** colocar o esqueleto cognitivo em uso real, com a tua identidade dentro.
+A Saga é desenhada para que **alimentar com a ajuda da IA** seja o workflow natural — `topic_write` é a interface para isso. Por isso, **construímos primeiro a máquina** (Iterations 0, 1, 2) e só depois a **alimentamos** (Iteration F). Tentar alimentar antes de a máquina estar bem é trabalho que vai ter que ser refeito quando F3 (lente always-on) e a tabela de lembranças entrarem.
 
-### T0.1 — Profile note (identidade)
+Ordem real de execução:
 
-- **Ficheiro:** `~/.saga/personal/profile/identity.md`
-- **Descrição:** Markdown com frontmatter completo + body estruturado em secções: *Identity, Languages, Career arc, Capabilities, Domain expertise, Current focus, Working style, Stack preferences, Public surfaces.*
-- **Frontmatter mínimo:** `id`, `scope: personal`, `type: profile`, `title: "Jorge Morais — identity"`, `sensitivity: confidential`, `confidence: validated`, `created_at`, `updated_at`.
-- **Body:** ≥500 palavras, factual, em PT-PT.
-- **Acceptance:** depois de `saga reindex`, `saga` indexa-a sem erros e `recall` com query `"jorge"` devolve-a.
-- **Dependências:** nenhuma.
-- **Esforço:** 1h.
+```
+Iter 0 → Iter 1 → Iter 2 → Iter F → Iter 3 → Iter 4+
+docs    lente    lembr    feed    valid.   conditional
+```
 
-### T0.2 — Preferências de comunicação
+---
 
-- **Ficheiro:** `~/.saga/personal/preferences/communication.md`
-- **Frontmatter:** `type: preference`.
-- **Body:** lista explícita: *idioma (PT-PT default), tom (directo, sem sycophancy), comprimento de resposta, quando pedir clarificação vs avançar, formato preferido (markdown, tabelas), uso de emojis (não), uso de filler ("certo!", "claro!"), …*
-- **Acceptance:** indexada; `recall "comunicação"` ou `"tom"` devolve-a.
-- **Dependências:** nenhuma.
-- **Esforço:** 15m.
+## Iteration 0 — Documentação canónica (apenas)
 
-### T0.3 — Policy de código
+**Objectivo:** alinhar os docs entre si antes de mais código.
 
-- **Ficheiro:** `~/.saga/personal/policy/code-style.md`
-- **Frontmatter:** `type: policy`.
-- **Body:** estilo de commits (Conventional?), estratégia de branching, código preferido (verbose vs idiomatic, comments, error handling), preferência de testes, padrões de PR, ferramentas (preferred linters/formatters por linguagem).
-- **Acceptance:** indexada; `recall "commit"` ou `"branching"` devolve-a.
-- **Dependências:** nenhuma.
-- **Esforço:** 30m.
-
-### T0.4 — Anotação de divergências em DESIGN_v2.md
+### T0.1 — Anotação de divergências em DESIGN_v2.md
 
 - **Ficheiro:** `docs/DESIGN_v2.md` (edição)
-- **Descrição:** adicionar uma secção curta no fim — *"§20 — Divergências face ao COGNITIVE_MODEL"* — listando explicitamente onde o doc precisa de update após Iteration 1 (ex: §13 read flow não menciona baseline always-on, §17 Phase 1 não inclui lembranças, etc).
+- **Descrição:** adicionar uma secção curta no fim — *"§20 — Divergências face ao COGNITIVE_MODEL"* — listando explicitamente onde o doc precisa de update após Iteration 1 (ex: §13 read flow não menciona baseline always-on, §17 Phase 1 não inclui lembranças, §11 schema não inclui tabela `lembranca`, etc).
 - **Sem reescrever o doc agora**, só anotar pendências.
 - **Acceptance:** secção §20 existe e referencia ≥3 pontos a alinhar.
 - **Dependências:** nenhuma.
 - **Esforço:** 30m.
 
-### T0.5 — Smoke do estado pós-Iteration 0
-
-- **Acção:** correr `saga reindex` na home, depois cd para um projecto teu, abrir Claude Code, fazer pergunta sobre algo do teu profile.
-- **Acceptance:** a IA responde calibrada por ti — refere-se ao teu papel, idioma, área, sem teres explicado nada nesta sessão.
-- **Dependências:** T0.1, T0.2, T0.3.
-- **Esforço:** 15m.
-
-**Saída da Iteration 0:** profile populado, conhecimento explícito sobre ti capturado, divergências cognitivas anotadas no design. Pronto para Iteration 1 que torna o hook *sempre-ligado*.
+**Saída da Iteration 0:** docs internamente consistentes, divergências sinalizadas. Pronto para mexer em código.
 
 ---
 
@@ -83,8 +61,9 @@
 - **Acceptance:**
   - Determinístico (mesmo input → mesmo output)
   - Respeita o limite de tokens
-  - Tem teste em `baseline_test.go` com profile fake
-- **Dependências:** Iteration 0 completa.
+  - Tem teste em `baseline_test.go` com profile fake (não precisa de profile real do user para validar)
+  - Profile vazio retorna string vazia (não crasha)
+- **Dependências:** nenhuma (profile real entra na Iteration F; aqui usamos fixtures).
 - **Esforço:** 2h.
 
 ### T1.2 — Refactor de `cmd_hook.go` para output em duas secções
@@ -136,14 +115,14 @@
 - **Dependências:** T1.1, T1.2.
 - **Esforço:** 30m.
 
-### T1.6 — Smoke pós-Iteration 1
+### T1.6 — Build verification
 
-- **Acção:** instala binário novo, refaz `setup-claude` se necessário, reinicia Claude Code, testa em ≥3 projectos diferentes durante 3 dias.
-- **Acceptance:** *"sente-se que ele me conhece"* validado em ≥10 sessões consecutivas; latência percepcionada do prompt sem regressão notável.
+- **Acção:** instala binário novo, corre `saga setup-claude`, reinicia Claude Code, abre uma sessão. Verifica que o output do hook contém `<saga-identity>` (mesmo que vazio se não houver profile ainda) sem regressão de latência.
+- **Acceptance:** binário corre, hook funciona, latência <50ms adicional. Validação real de "sente-se que ele me conhece" fica para Iteration F (precisa de profile populado).
 - **Dependências:** T1.1–T1.5.
-- **Esforço:** 30m de instalação + 3 dias de uso real.
+- **Esforço:** 30m.
 
-**Saída da Iteration 1:** F3 real. Cada IA configurada arranca cada prompt sabendo quem és.
+**Saída da Iteration 1:** F3 real implementado. Lente está ligada; falta só o conteúdo a injectar (Iteration F).
 
 ---
 
@@ -228,6 +207,55 @@
 - **Esforço:** 1h.
 
 **Saída da Iteration 2:** sistema com história de pensamento; ranking influenciado por uso real; possibilidade de análise (`que tópicos foram usados esta semana?`).
+
+---
+
+## Iteration F — Alimentação (feeding)
+
+**Objectivo:** popular a Saga com identidade, preferências, política e topic notes reais. Workflow natural: o user mantém este iteration vivo enquanto trabalha, com a ajuda da IA via `topic_write`.
+
+**Princípio:** a IA é a *escriba*; o user é a *fonte*. O user fornece (cola um doc, pede para extrair de uma conversa anterior, descreve verbalmente) e pede à IA para escrever as notas via `topic_write`. A Saga regista; o user revê quando quiser.
+
+### TF.1 — Profile note (identidade)
+
+- **Ficheiro destino:** `~/.saga/personal/profile/identity.md`
+- **Workflow:** *"Claude, lê este meu CV / esta minha bio / esta secção de uma conversa anterior. Extrai e escreve um profile completo na Saga."* Claude invoca `topic_write({type: profile, scope: personal, ...})`.
+- **Body recomendado:** ≥500 palavras em PT-PT, secções (Identity, Languages, Career arc, Capabilities, Domain expertise, Current focus, Working style, Stack preferences, Public surfaces).
+- **Acceptance:** após `saga reindex`, `recall "jorge"` ou `recall "career"` devolve-a; o baseline da Iter 1 começa a injectar conteúdo real.
+- **Dependências:** Iteration 1 (lente) deployed.
+- **Esforço:** 30m de prep + 30m de iteração com Claude.
+
+### TF.2 — Preferências de comunicação
+
+- **Ficheiro destino:** `~/.saga/personal/preferences/communication.md`
+- **Workflow:** dires verbalmente ou colares trecho de uma conversa em que estabeleceste preferências (idioma, tom, comprimento, formato). Claude escreve via `topic_write({type: preference, scope: personal})`.
+- **Acceptance:** indexada; baseline da lente injecta o tom.
+- **Dependências:** Iteration 1.
+- **Esforço:** 15m.
+
+### TF.3 — Policy de código
+
+- **Ficheiro destino:** `~/.saga/personal/policy/code-style.md`
+- **Workflow:** mesmo padrão — fornecer fonte (CLAUDE.md de algum projecto, ou descrever), Claude escreve via `topic_write({type: policy, scope: personal})`.
+- **Acceptance:** indexada; aplicada quando IAs trabalham contigo em código.
+- **Dependências:** Iteration 1.
+- **Esforço:** 30m.
+
+### TF.4 — Topic notes a partir de fontes existentes
+
+- **Workflow contínuo:** sempre que tiveres `.md` espalhados nos projectos com investigações que valha a pena reter ("MJPEG performance", "acme-platform hardware variants"...), pedes ao Claude para os ler e criar topic notes via `topic_write({type: topic, scope: project:<x>, ...})`.
+- **Acceptance:** topics começam a aparecer nos `recall`/lembrança logs; deixas de re-explicar contexto à IA.
+- **Dependências:** Iteration 1 + 2 deployed.
+- **Esforço:** ongoing — minutos por nota, conforme necessidade.
+
+### TF.5 — Smoke real-use
+
+- **Acção:** com profile + ≥3 topic notes reais inseridas, abre Claude Code em ≥3 projectos diferentes durante uma semana.
+- **Acceptance:** *"sente-se que ele me conhece"* validado em ≥10 sessões consecutivas; topics relevantes injectados nos contextos certos.
+- **Dependências:** TF.1, TF.2, TF.3, ≥3 TF.4 entries.
+- **Esforço:** uso real, 1 semana.
+
+**Saída da Iteration F:** Saga viva e útil. Triggers da Iteration 3 começam a contar a partir daqui.
 
 ---
 
