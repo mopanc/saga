@@ -14,6 +14,11 @@ permissions:
 
 jobs:
   analyze:
+    # CodeQL upload requires code scanning enabled in repo settings.
+    # On private repos this needs GitHub Advanced Security (paid). Skip
+    # while private; will start running automatically once Phase 8 makes
+    # the repo public (code scanning is free for public repos).
+    if: ${{ !github.event.repository.private }}
     name: Analyze (Go)
     runs-on: ubuntu-latest
     steps:
