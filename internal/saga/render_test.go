@@ -71,15 +71,15 @@ func TestRender_roundtrip(t *testing.T) {
 
 func TestRender_omitsEmptyOptional(t *testing.T) {
 	t1 := &Topic{
-		ID:    "01HXY5KZQVJ8M3R7ABCDEFGHIJ",
-		Scope: "personal",
-		Type:  "topic",
-		Title: "Minimal",
+		ID:          "01HXY5KZQVJ8M3R7ABCDEFGHIJ",
+		Scope:       "personal",
+		Type:        "topic",
+		Title:       "Minimal",
 		Sensitivity: "internal",
 		Confidence:  "proposed",
-		CreatedAt: time.Now().UTC(),
-		UpdatedAt: time.Now().UTC(),
-		Body:      "x",
+		CreatedAt:   time.Now().UTC(),
+		UpdatedAt:   time.Now().UTC(),
+		Body:        "x",
 	}
 	rendered, err := t1.Render()
 	if err != nil {

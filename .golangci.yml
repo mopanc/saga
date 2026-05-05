@@ -1,0 +1,31 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - gocritic
+    - misspell
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Stmt).Close
+        - (*database/sql.Tx).Rollback
+        - fmt.Fprintln
+        - fmt.Fprintf
+        - fmt.Fprint
+  exclusions:
+    rules:
+      - path: _test\.go$
+        linters:
+          - errcheck
+          - staticcheck
+
+formatters:
+  enable:
+    - gofumpt

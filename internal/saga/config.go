@@ -8,9 +8,9 @@ import (
 )
 
 type Config struct {
-	HomeDir            string
-	DBPath             string
-	BaselineMaxTokens  int
+	HomeDir           string
+	DBPath            string
+	BaselineMaxTokens int
 }
 
 func LoadConfig() (*Config, error) {

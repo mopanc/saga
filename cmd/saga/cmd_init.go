@@ -50,7 +50,7 @@ func runInit(args []string) error {
 	display := *displayName
 	if display == "" {
 		display = strings.ReplaceAll(scope, "-", " ")
-		display = strings.Title(display) //nolint:staticcheck — fine for ASCII project names
+		display = strings.Title(display) //nolint:staticcheck // fine for ASCII project names
 	}
 
 	if err := os.MkdirAll(filepath.Join(sagaDir, "topics"), 0o755); err != nil {
