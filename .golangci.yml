@@ -18,10 +18,6 @@ linters:
     - revive
 
 linters-settings:
-  gosec:
-    excludes:
-      # G115 — integer overflow conversion (noisy with FTS5/SQLite size constants)
-      - G115
   gocritic:
     enabled-tags:
       - performance
