@@ -111,7 +111,7 @@ func applyHookRegistration(exe, settingsPath string) error {
 	hookCmd := exe + " hook"
 
 	var existing []byte
-	data, err := os.ReadFile(settingsPath)
+	data, err := os.ReadFile(settingsPath) // #nosec G304 -- settingsPath is the user's own ~/.claude/settings.json, derived from os.UserHomeDir()
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read %s: %w", settingsPath, err)
 	}
@@ -147,13 +147,13 @@ func applyHookRegistration(exe, settingsPath string) error {
 	hooks["UserPromptSubmit"] = userPrompts
 	cfg["hooks"] = hooks
 
-	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
 		return fmt.Errorf("mkdir %s: %w", filepath.Dir(settingsPath), err)
 	}
 
 	if len(existing) > 0 {
 		bak := settingsPath + ".bak"
-		if err := os.WriteFile(bak, existing, 0o600); err != nil {
+		if err := os.WriteFile(bak, existing, 0o600); err != nil { // #nosec G703 -- bak is settingsPath+".bak"; settingsPath is the user's own home-derived path
 			return fmt.Errorf("write backup %s: %w", bak, err)
 		}
 		fmt.Printf("(backup written: %s)\n", bak)
@@ -228,7 +228,7 @@ func applyMCPRegistration(exe string) error {
 		return fmt.Errorf("claude CLI not found on PATH; cannot --apply (run the command manually)")
 	}
 
-	cmd := exec.Command("claude", "mcp", "add", "saga", "-s", "user", "--", exe, "mcp")
+	cmd := exec.Command("claude", "mcp", "add", "saga", "-s", "user", "--", exe, "mcp") // #nosec G204 -- claude is a fixed binary; exe is the path of the running saga binary
 	out, err := cmd.CombinedOutput()
 	output := strings.TrimSpace(string(out))
 	if err != nil {

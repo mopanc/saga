@@ -110,7 +110,7 @@ func (r *Resolver) discoverProject(cwd string) (*Layer, error) {
 }
 
 func loadLayer(root string) (Layer, error) {
-	metaBytes, err := os.ReadFile(filepath.Join(root, "meta.yml"))
+	metaBytes, err := os.ReadFile(filepath.Join(root, "meta.yml")) // #nosec G304 -- root is a layer dir resolved by Resolver from internal config
 	if err != nil {
 		return Layer{}, fmt.Errorf("read meta: %w", err)
 	}

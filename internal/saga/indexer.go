@@ -70,7 +70,7 @@ func (db *DB) IndexLayer(layer Layer) (*IndexResult, error) {
 // indexFile parses a single .md file and upserts it into the index.
 // Used both by IndexLayer (bulk) and TopicWrite (single, after each write).
 func (db *DB) indexFile(path string, layer Layer) error {
-	content, err := os.ReadFile(path)
+	content, err := os.ReadFile(path) // #nosec G304 -- path is from filepath.WalkDir over the layer's NotesDir
 	if err != nil {
 		return fmt.Errorf("read: %w", err)
 	}

@@ -53,16 +53,16 @@ func runInit(args []string) error {
 		display = strings.Title(display) //nolint:staticcheck // fine for ASCII project names
 	}
 
-	if err := os.MkdirAll(filepath.Join(sagaDir, "topics"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(sagaDir, "topics"), 0o700); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(sagaDir, "topics", "README.md"), []byte(topicsKeep), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(sagaDir, "topics", "README.md"), []byte(topicsKeep), 0o600); err != nil {
 		return err
 	}
 
 	metaPath := filepath.Join(sagaDir, "meta.yml")
 	metaContent := fmt.Sprintf(projectMetaTemplate, scope, display)
-	if err := os.WriteFile(metaPath, []byte(metaContent), 0o644); err != nil {
+	if err := os.WriteFile(metaPath, []byte(metaContent), 0o600); err != nil {
 		return err
 	}
 
@@ -78,7 +78,7 @@ func runInit(args []string) error {
 
 // detectProjectName tries (in order): git repo basename, cwd basename.
 func detectProjectName(cwd string) string {
-	if root, err := exec.Command("git", "-C", cwd, "rev-parse", "--show-toplevel").Output(); err == nil {
+	if root, err := exec.Command("git", "-C", cwd, "rev-parse", "--show-toplevel").Output(); err == nil { // #nosec G204 -- git is a fixed binary; cwd is from a CLI flag/working dir, no shell interpolation
 		return saga.Slugify(filepath.Base(strings.TrimSpace(string(root))))
 	}
 	return saga.Slugify(filepath.Base(cwd))
