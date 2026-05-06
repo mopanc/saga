@@ -195,7 +195,7 @@ func checkClaudeWiring() []check {
 }
 
 func checkMCPRegistration(claudeJSONPath string) []check {
-	data, err := os.ReadFile(claudeJSONPath)
+	data, err := os.ReadFile(claudeJSONPath) // #nosec G304 -- claudeJSONPath is the user's own ~/.claude.json, derived from os.UserHomeDir()
 	if err != nil {
 		return []check{{
 			status: statusFail,
@@ -224,7 +224,7 @@ func checkMCPRegistration(claudeJSONPath string) []check {
 }
 
 func checkHookRegistration(settingsPath string) []check {
-	data, err := os.ReadFile(settingsPath)
+	data, err := os.ReadFile(settingsPath) // #nosec G304 -- settingsPath is the user's own ~/.claude/settings.json, derived from os.UserHomeDir()
 	if err != nil {
 		return []check{{
 			status: statusWarn,
@@ -294,6 +294,7 @@ func checkContent(cfg *saga.Config) []check {
 	if err != nil {
 		return []check{{status: statusFail, label: "topic_index query failed", detail: err.Error()}}
 	}
+	defer func() { _ = rows.Close() }()
 	counts := map[string]int{}
 	total := 0
 	for rows.Next() {
@@ -304,7 +305,6 @@ func checkContent(cfg *saga.Config) []check {
 			total += n
 		}
 	}
-	rows.Close()
 
 	if total == 0 {
 		results = append(results, check{

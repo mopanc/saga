@@ -236,7 +236,7 @@ func emitMetaBlock(w io.Writer, cfg *saga.Config, noteCount int) {
 }
 
 func readBody(path string) (string, error) {
-	content, err := os.ReadFile(path)
+	content, err := os.ReadFile(path) // #nosec G304 -- path comes from TopicSnippet.FilePath, sourced from saga's own indexed topic_index DB
 	if err != nil {
 		return "", err
 	}

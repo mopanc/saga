@@ -185,7 +185,7 @@ func (s *Service) TopicRead(args TopicReadArgs) (*Topic, error) {
 	if err != nil {
 		return nil, fmt.Errorf("topic %q not found", args.Name)
 	}
-	content, err := os.ReadFile(path)
+	content, err := os.ReadFile(path) // #nosec G304 -- path is from saga's own topic_index DB lookup
 	if err != nil {
 		return nil, fmt.Errorf("read file: %w", err)
 	}
@@ -323,7 +323,7 @@ func (s *Service) TopicWrite(args TopicWriteArgs) (*TopicWriteResult, error) {
 	fpath := filepath.Join(target.NotesDir, Slugify(args.Name)+".md")
 
 	var existing *Topic
-	if data, err := os.ReadFile(fpath); err == nil {
+	if data, err := os.ReadFile(fpath); err == nil { // #nosec G304 -- fpath is constructed inside NotesDir via Slugify (regex-safe: ^[a-z0-9-]+$)
 		if t, err := ParseTopic(data); err == nil {
 			existing = t
 		}

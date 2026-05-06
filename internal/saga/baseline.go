@@ -115,7 +115,7 @@ func (s *Service) notesByScopeAndType(scope string, types []string) ([]*Topic, e
 		if err := rows.Scan(&path); err != nil {
 			return nil, err
 		}
-		content, err := os.ReadFile(path)
+		content, err := os.ReadFile(path) // #nosec G304 -- path is from saga's own topic_index DB
 		if err != nil {
 			continue
 		}
