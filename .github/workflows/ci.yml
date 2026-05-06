@@ -47,8 +47,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # PRs run only ubuntu (1× cost). Push events to main/pivot/v2-go
+      # also run macOS (10× cost) for post-merge cross-platform validation.
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
