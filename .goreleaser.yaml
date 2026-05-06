@@ -48,7 +48,14 @@ checksum:
   algorithm: sha256
 
 snapshot:
-  version_template: "{{ incpatch .Version }}-snapshot"
+  # The previous template `{{ incpatch .Version }}-snapshot` requires .Version
+  # to be valid SemVer. Until we cut our first SemVer tag (v1.0.0-beta.1),
+  # the only tag in the repo is `archive/typescript-baseline-2026` (the TS
+  # prototype baseline preserved across the Go pivot), and `incpatch` blows
+  # up on it, breaking every PR's Snapshot build. Use a fixed pre-release
+  # version with the short commit instead — valid SemVer, deterministic, and
+  # tag-independent.
+  version_template: "0.0.0-snapshot-{{ .ShortCommit }}"
 
 changelog:
   use: github-native
