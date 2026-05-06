@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -11,7 +12,26 @@ import (
 	"github.com/mopanc/saga/internal/saga"
 )
 
-const hookTopK = 3
+const (
+	hookTopK = 3
+
+	// maxTopicBodyChars caps the per-topic body inlined in the hook output.
+	// The model can call mcp__saga__topic_read to fetch the full body when
+	// the snippet is enough to know the topic is relevant. Without this cap
+	// a single ~13KB topic body blows past Claude Code's hook output limit
+	// and the entire <saga-context> block gets truncated to a 2KB preview.
+	maxTopicBodyChars = 1000
+
+	// maxHookOutputBytes is a defensive total cap on hook stdout. Above this,
+	// Claude Code persists the output to disk and only injects a 2KB preview
+	// into the model's context — defeating the purpose of the hook. We cap
+	// well below that limit.
+	maxHookOutputBytes = 8 * 1024
+
+	// truncationMarker is appended to bodies that exceed maxTopicBodyChars,
+	// signalling the model that the full content is one tool call away.
+	truncationMarker = "\n[truncated — call mcp__saga__topic_read for full body]"
+)
 
 type hookEvent struct {
 	Prompt string `json:"prompt"`
@@ -118,33 +138,76 @@ func runHookInner() error {
 //   - <saga-identity> when there is a non-empty baseline (profile/preference
 //     notes exist).
 //   - <saga-context> when there are query-matched topics.
+//
+// The whole block is assembled into a buffer first so we can enforce
+// maxHookOutputBytes — a defensive total cap that keeps the hook below
+// Claude Code's stdout truncation threshold. Per-topic bodies are also
+// individually capped via truncateTopicBody so a single oversized topic
+// can't starve the others.
 func emitLensBlock(w io.Writer, cfg *saga.Config, noteCount int, baseline string, results []saga.TopicSnippet) {
-	emitMetaBlock(w, cfg, noteCount)
+	var buf bytes.Buffer
+	emitMetaBlock(&buf, cfg, noteCount)
 
 	if baseline != "" {
-		fmt.Fprintln(w, "<saga-identity>")
-		fmt.Fprintln(w, baseline)
-		fmt.Fprintln(w, "</saga-identity>")
+		fmt.Fprintln(&buf, "<saga-identity>")
+		fmt.Fprintln(&buf, baseline)
+		fmt.Fprintln(&buf, "</saga-identity>")
 	}
 
-	if len(results) == 0 {
-		return
+	if len(results) > 0 {
+		fmt.Fprintln(&buf, "<saga-context>")
+		for _, r := range results {
+			fmt.Fprintf(&buf, "<topic name=%q scope=%q confidence=%q file=%q>\n",
+				r.Title, r.Scope, r.Confidence, r.FilePath)
+			if len(r.Synonyms) > 0 {
+				fmt.Fprintf(&buf, "synonyms: %s\n\n", strings.Join(r.Synonyms, ", "))
+			}
+			body, err := readBody(r.FilePath)
+			if err == nil && body != "" {
+				fmt.Fprintln(&buf, truncateTopicBody(body, maxTopicBodyChars))
+			}
+			fmt.Fprintln(&buf, "</topic>")
+		}
+		fmt.Fprintln(&buf, "</saga-context>")
 	}
 
-	fmt.Fprintln(w, "<saga-context>")
-	for _, r := range results {
-		fmt.Fprintf(w, "<topic name=%q scope=%q confidence=%q file=%q>\n",
-			r.Title, r.Scope, r.Confidence, r.FilePath)
-		if len(r.Synonyms) > 0 {
-			fmt.Fprintf(w, "synonyms: %s\n\n", strings.Join(r.Synonyms, ", "))
-		}
-		body, err := readBody(r.FilePath)
-		if err == nil && body != "" {
-			fmt.Fprintln(w, body)
-		}
-		fmt.Fprintln(w, "</topic>")
+	out := capHookOutput(buf.Bytes(), maxHookOutputBytes)
+	_, _ = w.Write(out)
+}
+
+// truncateTopicBody trims body to fit within maxChars. Cuts at a paragraph
+// boundary when one exists above the limit (\n\n), otherwise at a line
+// boundary (\n), otherwise hard-cut. A truncation marker is appended so the
+// model knows the full body is reachable via mcp__saga__topic_read.
+func truncateTopicBody(body string, maxChars int) string {
+	if len(body) <= maxChars {
+		return body
 	}
-	fmt.Fprintln(w, "</saga-context>")
+	cut := body[:maxChars]
+	if idx := strings.LastIndex(cut, "\n\n"); idx > 0 {
+		return strings.TrimRight(body[:idx], "\n") + truncationMarker
+	}
+	if idx := strings.LastIndex(cut, "\n"); idx > 0 {
+		return strings.TrimRight(body[:idx], "\n") + truncationMarker
+	}
+	return cut + truncationMarker
+}
+
+// capHookOutput enforces a hard byte ceiling on the hook output. If the
+// buffer is at or below the limit, it's returned untouched. Above the
+// limit, we cut at the last newline below the cap and append a marker so
+// the model knows context was dropped. This is a defensive guard — proper
+// per-topic truncation should keep us comfortably below the cap in normal
+// operation.
+func capHookOutput(out []byte, maxBytes int) []byte {
+	if len(out) <= maxBytes {
+		return out
+	}
+	trimmed := out[:maxBytes]
+	if idx := bytes.LastIndexByte(trimmed, '\n'); idx > 0 {
+		trimmed = trimmed[:idx+1]
+	}
+	return append(trimmed, []byte("<!-- saga: hook output capped at "+fmt.Sprint(maxBytes)+" bytes; some context omitted -->\n")...)
 }
 
 // emitMetaBlock writes the bootstrap <saga-meta> block. Cheap (~80 tokens),
