@@ -265,6 +265,12 @@ func (s *Service) TopicList(args TopicListArgs) ([]TopicSummary, error) {
 // topic.write
 // ----------------------------------------------------------------------------
 
+// MaxTopicBodyChars caps the size of a topic body (after append assembly).
+// Roughly 2000 tokens / 3000 words — generous for a self-contained topic,
+// strict enough to prevent the AI from writing monolithic notes that would
+// dominate context budgets when read back later.
+const MaxTopicBodyChars = 8000
+
 type TopicWriteArgs struct {
 	Name       string           `json:"name"`
 	Scope      string           `json:"scope,omitempty"`
@@ -289,6 +295,12 @@ func (s *Service) TopicWrite(args TopicWriteArgs) (*TopicWriteResult, error) {
 	}
 	if args.Body == "" {
 		return nil, fmt.Errorf("body is required")
+	}
+	if len(args.Body) > MaxTopicBodyChars {
+		return nil, fmt.Errorf(
+			"body too large: %d chars (cap is %d, ~2000 tokens). Split into multiple narrower topics, or call topic_write with mode=append on an existing topic to add a dated section",
+			len(args.Body), MaxTopicBodyChars,
+		)
 	}
 	layers, err := s.resolver.Resolve(s.cwd)
 	if err != nil {
@@ -382,6 +394,13 @@ func (s *Service) TopicWrite(args TopicWriteArgs) (*TopicWriteResult, error) {
 		}
 	default:
 		return nil, fmt.Errorf("invalid mode %q (want create|append|replace)", mode)
+	}
+
+	if len(topic.Body) > MaxTopicBodyChars {
+		return nil, fmt.Errorf(
+			"resulting body too large: %d chars (cap is %d, ~2000 tokens). The existing topic %q has grown beyond the per-topic limit; create a new narrower topic instead of appending further",
+			len(topic.Body), MaxTopicBodyChars, args.Name,
+		)
 	}
 
 	rendered, err := topic.Render()

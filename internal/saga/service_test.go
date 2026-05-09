@@ -102,6 +102,60 @@ func TestService_TopicWrite_createDuplicateRejected(t *testing.T) {
 	}
 }
 
+func TestService_TopicWrite_bodyAtCapAccepted(t *testing.T) {
+	svc, _ := setupServiceTest(t)
+	body := strings.Repeat("x", MaxTopicBodyChars)
+	if _, err := svc.TopicWrite(TopicWriteArgs{
+		Name: "at-cap", Scope: "project:demo", Body: body,
+	}); err != nil {
+		t.Fatalf("body of exactly MaxTopicBodyChars must be accepted: %v", err)
+	}
+}
+
+func TestService_TopicWrite_bodyOverCapRejected(t *testing.T) {
+	svc, _ := setupServiceTest(t)
+	body := strings.Repeat("x", MaxTopicBodyChars+1)
+	_, err := svc.TopicWrite(TopicWriteArgs{
+		Name: "over-cap", Scope: "project:demo", Body: body,
+	})
+	if err == nil {
+		t.Fatal("expected error for body > MaxTopicBodyChars")
+	}
+	if !strings.Contains(err.Error(), "body too large") {
+		t.Errorf("error should mention 'body too large', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Split") && !strings.Contains(err.Error(), "split") {
+		t.Errorf("error should suggest splitting, got: %v", err)
+	}
+}
+
+func TestService_TopicWrite_appendCannotExceedCap(t *testing.T) {
+	svc, _ := setupServiceTest(t)
+	half := strings.Repeat("x", MaxTopicBodyChars-100)
+	if _, err := svc.TopicWrite(TopicWriteArgs{
+		Name: "growing", Scope: "project:demo", Body: half, Mode: "create",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// First append fits.
+	if _, err := svc.TopicWrite(TopicWriteArgs{
+		Name: "growing", Scope: "project:demo", Body: "small", Mode: "append",
+	}); err != nil {
+		t.Fatalf("small append should fit: %v", err)
+	}
+	// Second append blows past the cap.
+	bigAppend := strings.Repeat("y", 200)
+	_, err := svc.TopicWrite(TopicWriteArgs{
+		Name: "growing", Scope: "project:demo", Body: bigAppend, Mode: "append",
+	})
+	if err == nil {
+		t.Fatal("append that pushes final body over cap should be rejected")
+	}
+	if !strings.Contains(err.Error(), "resulting body too large") {
+		t.Errorf("error should mention 'resulting body too large', got: %v", err)
+	}
+}
+
 func TestService_TopicWrite_unknownScopeRejected(t *testing.T) {
 	svc, _ := setupServiceTest(t)
 	if _, err := svc.TopicWrite(TopicWriteArgs{

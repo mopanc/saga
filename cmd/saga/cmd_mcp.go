@@ -101,7 +101,9 @@ var sagaTools = []mcp.Tool{
 			"communicated with; type='policy' for rules they want followed (commit style, " +
 			"branching, code conventions). Profile and preference notes are injected " +
 			"automatically into every prompt as <saga-identity>. Append-mode by default if " +
-			"the named note exists; new content is added under a dated section.",
+			"the named note exists; new content is added under a dated section. " +
+			"Body is capped at 8000 chars (~2000 tokens, ~3000 words) per topic — split " +
+			"into narrower topics instead of writing monoliths.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {

@@ -206,6 +206,50 @@ On conflict, `saga sync` stops with clear instructions: resolve manually, `git r
 | `topic_write` | Create or update a topic note (default scope=personal; modes: `create` / `append` / `replace`) |
 | `lembranca_log` | Inspect the recall history (filters: `since`, `kind`, `topic`, `limit`) |
 
+## Performance & limits
+
+Saga is designed so per-prompt token cost stays **constant** as your memory grows. The size of the corpus does not change how much context is injected — only retrieval ranking does.
+
+### Per-prompt injection — hard caps in code
+
+| Block | Cap | Source of truth |
+|---|---|---|
+| `<saga-meta>` | ~80 tokens (always-on) | `cmd/saga/cmd_hook.go::emitMetaBlock` |
+| `<saga-identity>` | **400 tokens** (env-overridable via `SAGA_BASELINE_MAX_TOKENS`) | `internal/saga/baseline.go::DefaultBaselineMaxTokens` |
+| `<saga-context>` | top-3 topics × 1000 chars each (~750 tokens), with **8 KB total ceiling** | `cmd/saga/cmd_hook.go::hookTopK / maxTopicBodyChars / maxHookOutputBytes` |
+| **Total per prompt** | **≈ 2000 tokens, hard ceiling** | — |
+
+Topics longer than the per-snippet cap are truncated with a `[truncated — call mcp__saga__topic_read for full body]` marker; the AI fetches the rest only when worth it.
+
+### Per-write cap — `topic_write` body
+
+| Limit | Value | Source |
+|---|---|---|
+| Per-topic body | **8000 chars (~2000 tokens, ~3000 words)** | `internal/saga/service.go::MaxTopicBodyChars` |
+
+Writes above the cap are rejected with an actionable error (split into narrower topics, or `mode=append` for evolving knowledge with dated sections). This keeps `topic_read` results bounded too — no surprise 13 KB tool result.
+
+### What grows with the corpus
+
+| Metric | Growth | Practical bound |
+|---|---|---|
+| Tokens injected per prompt | **constant (≈ 2000)** | n/a — by design |
+| Reindex time (full) | ~30 ms / topic | 10k topics ≈ 5 min, run on demand |
+| Recall latency (FTS5 + BM25) | sub-linear | well under 200 ms for 100k topics in measurements |
+| Index DB size | ~30 % overhead over markdown | 10k notes × 2 KB ≈ 26 MB total |
+| `git pull/push` of personal layer | linear in history | use `--depth=1` clone for very large layers |
+
+### What can degrade — and the recovery path
+
+1. **Hook timeout.** Claude Code allows ~30 s for `UserPromptSubmit`. Recall on extreme corpora can flirt with this limit. Mitigation in roadmap: `sqlite-vec` extension + Ollama embeddings (Phase 1.5).
+2. **Reindex failure.** The index is fully regenerable from markdown. `rm $SAGA_HOME/index.db && saga reindex` recovers 100 % of state.
+3. **Sync conflict.** Surfaced by `saga sync` with the conflicting file paths and exit-non-zero. Resolve with `git rebase --continue` and `saga sync --push`.
+4. **Wide recall query.** Top-K is bounded; ranking still applies. Worst case is irrelevant snippets, never an injection blow-up.
+
+### Token budget visibility (planned)
+
+`saga doctor` will surface a 7-day token-budget summary (avg/p99 injected, hook truncation count, `topic_read` average size). Backed by the existing `lembrança` log; landing in a future release.
+
 ## Configuration
 
 | Variable | Default | Meaning |
