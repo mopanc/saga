@@ -40,32 +40,74 @@ Saga gives the agent a place to **write durable notes** after an investigation, 
 - **Project layer** (`<project>/.saga/`) — topics about this codebase. Created with `saga init`. Lives inside the project's git repo and travels with it. Active only when you `cd` into the project.
 - **Automatic resolution.** Saga walks up from `cwd` looking for `.saga/meta.yml`, merges with personal. Switch projects, project layer changes; personal stays.
 
-## Quick start
+## Install
 
-Prerequisite: Go ≥ 1.25 (or skip the Go install and use the prebuilt binary).
+Pick whichever fits.
 
-### 1. Install
+### Option A — `go install` (any OS, needs Go ≥ 1.25)
 
 ```bash
 go install github.com/mopanc/saga/cmd/saga@latest
 ```
 
-Or, no Go installed? Grab a prebuilt binary from the [latest release](https://github.com/mopanc/saga/releases) (macOS / Linux / Windows × amd64 / arm64):
+Make sure `$(go env GOPATH)/bin` is on `PATH` (usually `~/go/bin`).
+
+### Option B — prebuilt binary (no Go required)
+
+Every release ships static binaries for all six common platforms. Pick your asset from the [latest release](https://github.com/mopanc/saga/releases/latest):
+
+| OS | Architecture | Asset |
+|---|---|---|
+| macOS | Intel | `saga_<version>_macos_amd64.tar.gz` |
+| macOS | Apple Silicon (M1/M2/M3/M4) | `saga_<version>_macos_arm64.tar.gz` |
+| Linux | amd64 (most x86_64 servers/desktops) | `saga_<version>_linux_amd64.tar.gz` |
+| Linux | arm64 (Raspberry Pi 4/5, IMX8, AWS Graviton) | `saga_<version>_linux_arm64.tar.gz` |
+| Windows | amd64 | `saga_<version>_windows_amd64.zip` |
+| Windows | arm64 | `saga_<version>_windows_arm64.zip` |
+
+`checksums.txt` (SHA-256) is published alongside for verification.
+
+#### One-line install — macOS / Linux
 
 ```bash
-gh release download -R mopanc/saga -p '*macos_arm64*' --output - | tar -xz -C ~/go/bin saga
+TAG=$(curl -sL https://api.github.com/repos/mopanc/saga/releases/latest | grep -o '"tag_name":\s*"[^"]*"' | cut -d'"' -f4)
+OS=$(uname -s | tr '[:upper:]' '[:lower:]' | sed 's/darwin/macos/')
+ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+curl -L "https://github.com/mopanc/saga/releases/download/${TAG}/saga_${TAG#v}_${OS}_${ARCH}.tar.gz" | tar -xz -C /tmp saga
+sudo mv /tmp/saga /usr/local/bin/saga
+saga version
 ```
 
-Make sure `~/go/bin` is in `PATH`:
+#### One-line install — Windows (PowerShell)
+
+```powershell
+$tag = (Invoke-RestMethod https://api.github.com/repos/mopanc/saga/releases/latest).tag_name
+$ver = $tag.TrimStart('v')
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
+$url = "https://github.com/mopanc/saga/releases/download/$tag/saga_${ver}_windows_$arch.zip"
+Invoke-WebRequest $url -OutFile $env:TEMP\saga.zip
+Expand-Archive -Force $env:TEMP\saga.zip -DestinationPath $HOME\bin
+$env:Path = "$HOME\bin;$env:Path"     # add to PATH for the session
+saga version
+```
+
+### Option C — Homebrew / Scoop
+
+Coming with `v1.0.0` stable. Watch the repo for the announcement.
+
+### Verify
 
 ```bash
-echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.zshrc
-echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.zprofile  # covers IDE terminals too
-source ~/.zshrc
 saga doctor                       # diagnoses everything that is missing
 ```
 
-### 2. Wire into Claude Code
+`saga doctor` is your compass — run it on any machine and it tells you exactly what is wired, what is missing, and a copy-paste fix for each gap.
+
+## Quick start
+
+Prerequisite: `saga` on your `PATH` (see [Install](#install)).
+
+### 1. Wire into Claude Code
 
 ```bash
 saga setup-claude --apply         # registers the MCP server and prints the hook snippet
@@ -80,7 +122,7 @@ Saga has two integration points and they live in different files:
 
 **Restart Claude Code completely (`Cmd+Q` and reopen)** — MCP servers and settings are read at startup.
 
-### 3. Initialise a project layer (optional)
+### 2. Initialise a project layer (optional)
 
 For each project where you want shared, team-visible notes:
 
@@ -93,7 +135,7 @@ git push                          # ships with the project
 
 `saga init` derives the scope name from `git rev-parse --show-toplevel`. The personal layer is auto-created on first invocation — no manual init needed.
 
-### 4. Validate
+### 3. Validate
 
 ```bash
 saga doctor                       # everything should be ✓
