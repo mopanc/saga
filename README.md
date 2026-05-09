@@ -307,8 +307,18 @@ saga/
 └── docs/                      design notes
 ```
 
+## Saga Topic Spec
+
+Saga is a **cognitive substrate over markdown**, not just a memory tool. The on-disk contract — primitives, relations, operators, conformance levels — is published as a versioned specification, separate from any particular engine.
+
+- [`docs/spec/saga-topic-v1.md`](docs/spec/saga-topic-v1.md) — Saga Topic Specification v1.0 (draft).
+- [`docs/spec/README.md`](docs/spec/README.md) — spec/engine separation, versioning, contribution process.
+
+The model is ECMAScript / V8: an open spec that anyone can implement, plus a canonical reference engine (this repository) that catches up to the spec over time. Other engines — IDE lint extensions, cognitive runtimes, hosted services — are welcome and conform by implementing the level (§10) that fits their surface.
+
 ## Documentation
 
+- [docs/spec/saga-topic-v1.md](docs/spec/saga-topic-v1.md) — **Saga Topic Spec v1.0** (normative on-disk contract).
 - [docs/DESIGN_v2.md](docs/DESIGN_v2.md) — technical architecture (storage, MCP, SQL).
 - [docs/COGNITIVE_MODEL.md](docs/COGNITIVE_MODEL.md) — cognitive model (5 layers + 2 cross-cutting); failure modes, anti-creep.
 - [docs/PLAN.md](docs/PLAN.md) — iterations and utility tests.
