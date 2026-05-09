@@ -229,7 +229,7 @@ func emitMetaBlock(w io.Writer, cfg *saga.Config, noteCount int) {
 	}
 
 	fmt.Fprintln(w, "<saga-meta>")
-	fmt.Fprintf(w, "saga v%s wired in. db=%s, %s%s\n", saga.Version, dbPath, countStr, state)
+	fmt.Fprintf(w, "saga v%s wired in. db=%s, %s%s\n", saga.VersionString(), dbPath, countStr, state)
 	fmt.Fprintln(w, "tools: mcp__saga__topic_write, mcp__saga__recall, mcp__saga__topic_read, mcp__saga__topic_list, mcp__saga__lembranca_log")
 	fmt.Fprintln(w, "use topic_write (type=profile|preference|policy|topic, default scope=personal) to persist anything future sessions should not have to rediscover; use recall before doing investigation already covered by an existing note")
 	fmt.Fprintln(w, "</saga-meta>")

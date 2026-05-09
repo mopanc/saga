@@ -32,7 +32,7 @@ Run 'saga help <command>' for command-specific notes.
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, usage, saga.Version)
+		fmt.Fprintf(os.Stderr, usage, saga.VersionString())
 		os.Exit(2)
 	}
 
@@ -42,10 +42,10 @@ func main() {
 	var err error
 	switch cmd {
 	case "version", "-v", "--version":
-		fmt.Printf("saga v%s\n", saga.Version)
+		fmt.Printf("saga v%s\n", saga.VersionString())
 		return
 	case "help", "-h", "--help":
-		fmt.Fprintf(os.Stdout, usage, saga.Version)
+		fmt.Fprintf(os.Stdout, usage, saga.VersionString())
 		return
 	case "init":
 		err = runInit(args)
@@ -63,7 +63,7 @@ func main() {
 		err = runSetupClaude(args)
 	default:
 		fmt.Fprintf(os.Stderr, "saga: unknown command %q\n\n", cmd)
-		fmt.Fprintf(os.Stderr, usage, saga.Version)
+		fmt.Fprintf(os.Stderr, usage, saga.VersionString())
 		os.Exit(2)
 	}
 

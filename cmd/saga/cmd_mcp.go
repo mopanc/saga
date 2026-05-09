@@ -37,12 +37,12 @@ func runMCP(args []string) error {
 	cwd, _ := os.Getwd()
 	svc := saga.NewService(db, cfg, cwd)
 
-	server := mcp.New("saga", saga.Version, sagaTools, dispatchTool(svc))
+	server := mcp.New("saga", saga.VersionString(), sagaTools, dispatchTool(svc))
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	fmt.Fprintf(os.Stderr, "saga mcp v%s — db=%s cwd=%s\n", saga.Version, cfg.DBPath, cwd)
+	fmt.Fprintf(os.Stderr, "saga mcp v%s — db=%s cwd=%s\n", saga.VersionString(), cfg.DBPath, cwd)
 	return server.Serve(ctx, os.Stdin, os.Stdout)
 }
 

@@ -23,7 +23,7 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
-      - -X github.com/mopanc/saga/internal/saga.Version={{.Tag}}
+      - -X github.com/mopanc/saga/internal/saga.Version={{.Version}}
 
 archives:
   - id: saga

@@ -92,7 +92,7 @@ func checkBinary() []check {
 	results = append(results, check{
 		status: statusOK,
 		label:  "binary",
-		detail: fmt.Sprintf("%s (v%s)", exe, saga.Version),
+		detail: fmt.Sprintf("%s (v%s)", exe, saga.VersionString()),
 	})
 
 	pathSaga, err := exec.LookPath("saga")
