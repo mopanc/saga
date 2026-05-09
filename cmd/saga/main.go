@@ -21,6 +21,7 @@ Commands:
   version          Print version
   init             Initialise .saga/ in the current project
   reindex          Rebuild SQLite index from markdown in active layers
+  sync             Pull/push the personal layer between machines (auto-commit + rebase)
   lembrancas       List recent recall events from the index
   doctor           Diagnose installation, config, and content state
   mcp              Run MCP stdio server (invoked by AI clients)
@@ -51,6 +52,8 @@ func main() {
 		err = runInit(args)
 	case "reindex":
 		err = runReindex(args)
+	case "sync":
+		err = runSync(args)
 	case "lembrancas":
 		err = runLembrancas(args)
 	case "doctor":

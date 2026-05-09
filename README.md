@@ -93,8 +93,9 @@ A partir daqui, qualquer IA configurada com MCP recebe 5 tools (`recall`, `topic
 |---|---|
 | `saga init` | Cria `.saga/meta.yml` + `.saga/topics/` no cwd |
 | `saga reindex` | Reconstrói o índice SQLite a partir dos `.md` das layers activas |
+| `saga sync` | Pull + push do personal layer entre máquinas (auto-commit + rebase). Flags: `--pull`, `--push`, `--status`, `--no-auto-commit` |
 | `saga lembrancas` | Lista eventos de recall recentes (filtros: `--since`, `--kind`, `--topic`) |
-| `saga doctor` | Diagnostica instalação, config, e estado do conteúdo |
+| `saga doctor` | Diagnostica instalação, config, conteúdo, e estado do sync |
 | `saga mcp` | Corre como MCP stdio server (chamado por AI clients) |
 | `saga hook` | Hook UserPromptSubmit para Claude Code (recebe event JSON em stdin) |
 | `saga setup-claude` | Wire no Claude Code (MCP via `claude mcp add` + hook em `settings.json`); usa `--apply` para registar o MCP automaticamente |
@@ -110,6 +111,40 @@ A partir daqui, qualquer IA configurada com MCP recebe 5 tools (`recall`, `topic
 | `topic_list` | Lista tópicos visíveis no scope actual |
 | `topic_write` | Cria/actualiza topic note (default scope=personal, modes: create/append/replace) |
 | `lembranca_log` | Inspecciona histórico de recall (filtros: since/kind/topic/limit) |
+
+## Sincronização entre máquinas
+
+Saga foi pensada para te seguir entre PCs (casa, trabalho, portátil). O personal layer (`~/.saga/personal/`) é um directório que tu controlas — torna-o um repo git apontado a um remote teu (privado, recomendado), e o `saga sync` resolve o resto.
+
+### Setup uma vez (na primeira máquina)
+
+```bash
+cd ~/.saga/personal
+git init && git add -A && git commit -m "init"
+git branch -M main
+git remote add origin git@github.com:<teu-user>/saga-personal.git   # repo privado
+git push -u origin main
+```
+
+### Cada máquina nova
+
+```bash
+git clone git@github.com:<teu-user>/saga-personal.git ~/.saga/personal
+saga reindex
+```
+
+### Day-to-day
+
+```bash
+saga sync             # pull --rebase + push (auto-commits o que está pendente)
+saga sync --status    # vê o que se passa sem mexer em nada
+saga sync --pull      # só puxa (útil no início da sessão)
+saga sync --push      # só empurra (útil depois de uma rajada de topic_writes)
+```
+
+Em conflito, o `saga sync` pára com instruções claras: resolves manualmente com `git rebase --continue` e voltas a chamar `saga sync --push`.
+
+`saga doctor` reporta o estado do sync (remote, branch, ahead/behind, ficheiros pendentes).
 
 ## Variáveis de ambiente
 
@@ -170,7 +205,7 @@ saga/
 
 ```bash
 go build ./...      # compila tudo
-go test ./...       # corre testes (55 actuais)
+go test ./...       # corre toda a suite
 go run ./cmd/saga version
 ```
 

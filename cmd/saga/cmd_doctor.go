@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -53,6 +54,7 @@ func runDoctor(args []string) error {
 		{"Binary", checkBinary()},
 		{"Saga home", checkSagaHome(cfg)},
 		{"Claude Code wiring", checkClaudeWiring()},
+		{"Personal layer sync", checkSync(cfg)},
 		{"Content", checkContent(cfg)},
 	} {
 		fmt.Println(section.name)
@@ -274,6 +276,55 @@ func checkHookRegistration(settingsPath string) []check {
 		label:  "UserPromptSubmit hook not wired",
 		fix:    "run `saga setup-claude` and merge the hooks block into ~/.claude/settings.json",
 	}}
+}
+
+func checkSync(cfg *saga.Config) []check {
+	layerDir := saga.PersonalLayerDir(cfg)
+	if _, err := os.Stat(layerDir); err != nil {
+		return []check{{status: statusWarn, label: "personal layer not on disk yet"}}
+	}
+	rep, err := saga.SyncStatus(context.Background(), layerDir)
+	if err != nil {
+		return []check{{status: statusFail, label: "sync status check failed", detail: err.Error()}}
+	}
+	if !rep.HasRemote {
+		return []check{{
+			status: statusWarn,
+			label:  "no git remote configured for personal layer",
+			fix: "bootstrap a sync remote so memory survives across machines:\n  cd " + layerDir + "\n" +
+				"  git init && git add -A && git commit -m 'init' && git branch -M main\n" +
+				"  git remote add origin <your-private-repo-url>\n" +
+				"  git push -u origin main",
+		}}
+	}
+
+	results := []check{{
+		status: statusOK,
+		label:  fmt.Sprintf("remote=%s branch=%s", rep.Remote, rep.Branch),
+	}}
+	switch {
+	case len(rep.UncommittedFiles) > 0:
+		results = append(results, check{
+			status: statusWarn,
+			label:  fmt.Sprintf("%d uncommitted file(s) in personal layer", len(rep.UncommittedFiles)),
+			fix:    "run `saga sync` to commit + push them",
+		})
+	case rep.AheadBy > 0:
+		results = append(results, check{
+			status: statusWarn,
+			label:  fmt.Sprintf("ahead of origin by %d commit(s)", rep.AheadBy),
+			fix:    "run `saga sync --push`",
+		})
+	case rep.BehindBy > 0:
+		results = append(results, check{
+			status: statusWarn,
+			label:  fmt.Sprintf("behind origin by %d commit(s)", rep.BehindBy),
+			fix:    "run `saga sync --pull`",
+		})
+	default:
+		results = append(results, check{status: statusOK, label: "in sync with origin (cached)"})
+	}
+	return results
 }
 
 func checkContent(cfg *saga.Config) []check {
