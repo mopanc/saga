@@ -28,16 +28,15 @@ Pré-requisito: Go ≥ 1.22.
 
 ### 1. Instalar (uma vez)
 
-Repositório actualmente privado, então instala a partir do clone local:
-
 ```bash
-git clone git@github.com:mopanc/saga.git
-cd saga
-git checkout pivot/v2-go        # branch de desenvolvimento actual
-go install ./cmd/saga
+go install github.com/mopanc/saga/cmd/saga@latest
 ```
 
-(Quando o repo for público, `go install github.com/mopanc/saga/cmd/saga@latest` passa a funcionar directo.)
+Alternativa sem Go: baixar o binário pré-compilado da [última release](https://github.com/mopanc/saga/releases/latest) (macOS/Linux/Windows × amd64/arm64) e mover para um sítio no PATH:
+
+```bash
+gh release download -R mopanc/saga -p '*macos_arm64*' --output - | tar -xz -C ~/go/bin saga
+```
 
 ### 2. Garantir que o PATH inclui `~/go/bin`
 
@@ -175,4 +174,4 @@ go test ./...       # corre testes (55 actuais)
 go run ./cmd/saga version
 ```
 
-Branch principal de desenvolvimento: `pivot/v2-go` (até v2 fazer merge para `main`).
+Branch principal: `main`.
