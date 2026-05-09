@@ -1,212 +1,247 @@
-# Saga — AI Investigation Memory
+# Saga — persistent memory for AI coding agents
 
-Camada de conhecimento layered, local-first, partilhada entre IAs (Claude Code, Cursor, Windsurf, Antigravity) via MCP. Topic notes em markdown, indexadas por SQLite, sincronizadas via git. O LLM lê **e** mantém as notas — a próxima conversa começa com o que a anterior descobriu.
+[![CI](https://github.com/mopanc/saga/actions/workflows/ci.yml/badge.svg)](https://github.com/mopanc/saga/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/mopanc/saga?include_prereleases&sort=semver)](https://github.com/mopanc/saga/releases)
+[![Go Reference](https://pkg.go.dev/badge/github.com/mopanc/saga.svg)](https://pkg.go.dev/github.com/mopanc/saga)
+[![Go Report Card](https://goreportcard.com/badge/github.com/mopanc/saga)](https://goreportcard.com/report/github.com/mopanc/saga)
+[![License: Apache-2.0](https://img.shields.io/github/license/mopanc/saga)](LICENSE)
+[![CodeQL](https://github.com/mopanc/saga/actions/workflows/codeql.yml/badge.svg)](https://github.com/mopanc/saga/actions/workflows/codeql.yml)
 
-## Filosofia
+> **Saga** is a topic-grained, layered memory layer for AI coding agents. It lets Claude Code, Cursor, Windsurf, Antigravity and any other [Model Context Protocol](https://modelcontextprotocol.io) (MCP) client remember what they learned across sessions — your codebase, your decisions, your preferences — so the next conversation starts where the last one ended.
 
-1. **Investigation memory, não knowledge dump.** A unidade é a *topic note* curada (~500 palavras, auto-contida), não a frase indexada por BM25.
-2. **Layered scopes.** `personal | project | dept | org` — cada camada tem owner independente. Default escreve em `personal`; promoção para scopes mais altos é explícita.
-3. **Substrato sobre invenção.** git para sync/versionamento/ACL. SQLite para índice (regenerável). Markdown para fonte de verdade. Saga não inventa nenhum destes.
+Local-first. Single static binary. Markdown notes in git, indexed by SQLite. Cross-IDE, cross-machine.
 
-## Os dois sítios onde os dados vivem
+## Why Saga
 
-A separação é simples e ortogonal — vale a pena fixar:
+AI coding agents have no memory between sessions. Every conversation starts blank — you re-explain your stack, your conventions, the bug you fixed last week. For solo developers and small teams working on real codebases, this re-explanation costs hours every week.
+
+Saga gives the agent a place to **write durable notes** after an investigation, and a fast retrieval path to **read them back** on the next session. The unit of memory is a curated *topic note* (~500 words, self-contained markdown), not a chunked sentence corpus — because investigation work needs coherent context, not scattered phrases.
+
+## Highlights
+
+- **Topic-grained, not chunk-grained.** ~500-word self-contained notes beat sentence-level chunking for code-investigation workloads.
+- **Layered scopes.** `personal | project | dept | org` — each layer has an independent owner, sync remote, and sensitivity. Personal travels with you; project travels with the repo.
+- **Cross-IDE via MCP.** Five tools (`recall`, `topic_read`, `topic_list`, `topic_write`, `lembranca_log`) exposed over JSON-RPC 2.0 stdio to any MCP client.
+- **Auto-injection on Claude Code.** A `UserPromptSubmit` hook surfaces the relevant topic notes on every prompt so the agent never forgets to look.
+- **Multi-machine sync.** `saga sync` keeps your personal layer in step across Mac / Linux / Windows over your own private git remote.
+- **Local-first, no telemetry.** SQLite index regenerable from markdown. No cloud, no auth, no vendor lock-in.
+- **Single static binary.** No runtime, no dependencies. macOS / Linux / Windows × amd64 / arm64.
+- **Security-hardened.** `gosec`, `govulncheck`, `gitleaks`, `golangci-lint`, CodeQL — all green in CI.
+
+## How memory is organised
 
 ```
-~/go/bin/saga                    BINÁRIO   global, uma instalação
-~/.saga/personal/                DADOS     teus pessoais (privados, teu git)
-<projeto>/.saga/                 DADOS     do projecto (parte do git do projecto)
+~/go/bin/saga                    BINARY    one install, used everywhere
+~/.saga/personal/                DATA      your private notes (your own git remote)
+<project>/.saga/                 DATA      project notes (commits with the project)
 ```
 
-- **Personal layer** (`~/.saga/personal/`) — identidade, preferências, política, tópicos pessoais. Auto-criada na 1ª invocação. Sincronizas com **TEU** git remote privado. Visível em qualquer projecto.
-- **Project layer** (`<projeto>/.saga/`) — tópicos sobre este código. Criada com `saga init`. Faz parte do git do projecto, viaja com ele. Activa só quando estás cd'd dentro.
-- **Resolução automática:** o hook olha para `cwd`, faz walk-up para `.saga/meta.yml`, junta com personal. Mudas de projecto, project muda; personal fica.
+- **Personal layer** (`~/.saga/personal/`) — identity, preferences, policies, personal topics. Auto-created on first invocation. Sync to *your own* private git repo. Visible from any directory.
+- **Project layer** (`<project>/.saga/`) — topics about this codebase. Created with `saga init`. Lives inside the project's git repo and travels with it. Active only when you `cd` into the project.
+- **Automatic resolution.** Saga walks up from `cwd` looking for `.saga/meta.yml`, merges with personal. Switch projects, project layer changes; personal stays.
 
 ## Quick start
 
-Pré-requisito: Go ≥ 1.22.
+Prerequisite: Go ≥ 1.25 (or skip the Go install and use the prebuilt binary).
 
-### 1. Instalar (uma vez)
+### 1. Install
 
 ```bash
 go install github.com/mopanc/saga/cmd/saga@latest
 ```
 
-Alternativa sem Go: baixar o binário pré-compilado da [última release](https://github.com/mopanc/saga/releases/latest) (macOS/Linux/Windows × amd64/arm64) e mover para um sítio no PATH:
+Or, no Go installed? Grab a prebuilt binary from the [latest release](https://github.com/mopanc/saga/releases) (macOS / Linux / Windows × amd64 / arm64):
 
 ```bash
 gh release download -R mopanc/saga -p '*macos_arm64*' --output - | tar -xz -C ~/go/bin saga
 ```
 
-### 2. Garantir que o PATH inclui `~/go/bin`
+Make sure `~/go/bin` is in `PATH`:
 
 ```bash
 echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.zshrc
-echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.zprofile  # cobre também IDE terminals
+echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.zprofile  # covers IDE terminals too
 source ~/.zshrc
-saga doctor                     # diagnostica tudo o que falta
+saga doctor                       # diagnoses everything that is missing
 ```
 
-`saga doctor` é a tua bússola — corre em qualquer máquina e diz-te exactamente o que está montado, o que falta, e como corrigir cada coisa.
-
-### 3. Wire no Claude Code (uma vez)
+### 2. Wire into Claude Code
 
 ```bash
-saga setup-claude --apply        # regista o MCP e imprime o snippet do hook
+saga setup-claude --apply         # registers the MCP server and prints the hook snippet
 ```
 
-Saga tem dois pontos de integração e vivem em ficheiros diferentes:
+Saga has two integration points and they live in different files:
 
-- **MCP server** → `~/.claude.json` (gerido pelo `claude mcp add`). Sem isto, as ferramentas `mcp__saga__*` não aparecem em sessão nenhuma.
-- **UserPromptSubmit hook** → `~/.claude/settings.json`. Sem isto, o saga não injecta contexto nos prompts.
+- **MCP server** → `~/.claude.json` (managed by `claude mcp add`). Without this, the `mcp__saga__*` tools never appear in any session.
+- **`UserPromptSubmit` hook** → `~/.claude/settings.json`. Without this, Saga does not auto-inject context into prompts.
 
-`--apply` corre `claude mcp add saga -s user -- $(which saga) mcp` por ti. O snippet do hook ainda tens de fazer merge à mão (não é seguro mexer no `settings.json` automaticamente — pode ter outros hooks/MCPs).
+`--apply` runs `claude mcp add saga -s user -- $(which saga) mcp` for you. The hook snippet must be merged into `settings.json` by hand (automatic edits to that file would risk clobbering other hooks/MCPs).
 
-**Reinicia o Claude Code completamente (`Cmd+Q` + reabrir)** — MCP servers e settings só são lidos em arranque.
+**Restart Claude Code completely (`Cmd+Q` and reopen)** — MCP servers and settings are read at startup.
 
-### 4. Inicializar a Saga em cada projecto onde queres memória de equipa
+### 3. Initialise a project layer (optional)
+
+For each project where you want shared, team-visible notes:
 
 ```bash
 cd ~/code/acme-platform
-saga init                       # cria .saga/meta.yml + .saga/topics/
+saga init                         # creates .saga/meta.yml + .saga/topics/
 git add .saga/ && git commit -m "init saga layer"
-git push                        # vai com o projecto
+git push                          # ships with the project
 ```
 
-`saga init` detecta o nome do projecto via `git rev-parse --show-toplevel`. Personal layer é auto-criada na primeira invocação — não precisa de init manual.
+`saga init` derives the scope name from `git rev-parse --show-toplevel`. The personal layer is auto-created on first invocation — no manual init needed.
 
-### 5. Validar
+### 4. Validate
 
 ```bash
-saga doctor                     # devia mostrar tudo ✓
+saga doctor                       # everything should be ✓
 ```
 
-A partir daqui, qualquer IA configurada com MCP recebe 5 tools (`recall`, `topic_read`, `topic_list`, `topic_write`, `lembranca_log`); o hook em Claude Code injecta automaticamente em cada prompt:
+From here, any MCP-configured AI gets the five tools listed below. On Claude Code, the hook injects on every prompt:
 
-- `<saga-meta>` — sempre, mesmo com saga vazio. Diz à IA que o saga existe, lista os tools, e quando chamar `topic_write`. Sem isto, uma sessão fresca não tem como descobrir que o saga está montado.
-- `<saga-identity>` — quando há profile/preference notes
-- `<saga-context>` — quando topic notes batem na query
+- `<saga-meta>` — always, even when the index is empty. Tells the agent that Saga is wired in, lists the tools, and explains when to call `topic_write`. Without this, a fresh session has no way to discover Saga.
+- `<saga-identity>` — when profile / preference notes exist (personal baseline).
+- `<saga-context>` — when topic notes match the prompt's recall query.
 
-## Subcomandos
+## Multi-machine sync
 
-| Comando | Para quê |
-|---|---|
-| `saga init` | Cria `.saga/meta.yml` + `.saga/topics/` no cwd |
-| `saga reindex` | Reconstrói o índice SQLite a partir dos `.md` das layers activas |
-| `saga sync` | Pull + push do personal layer entre máquinas (auto-commit + rebase). Flags: `--pull`, `--push`, `--status`, `--no-auto-commit` |
-| `saga lembrancas` | Lista eventos de recall recentes (filtros: `--since`, `--kind`, `--topic`) |
-| `saga doctor` | Diagnostica instalação, config, conteúdo, e estado do sync |
-| `saga mcp` | Corre como MCP stdio server (chamado por AI clients) |
-| `saga hook` | Hook UserPromptSubmit para Claude Code (recebe event JSON em stdin) |
-| `saga setup-claude` | Wire no Claude Code (MCP via `claude mcp add` + hook em `settings.json`); usa `--apply` para registar o MCP automaticamente |
-| `saga version` | Imprime versão |
-| `saga help` | Lista comandos |
+Saga is built to follow you between PCs. The personal layer is a directory you control — make it a git repo backed by your own private remote, and `saga sync` does the rest.
 
-## MCP tools (visíveis para qualquer IA)
-
-| Tool | Função |
-|---|---|
-| `recall` | Search FTS5 + BM25 + recency boost por scopes activos |
-| `topic_read` | Lê topic note inteira por nome (slug ou título) |
-| `topic_list` | Lista tópicos visíveis no scope actual |
-| `topic_write` | Cria/actualiza topic note (default scope=personal, modes: create/append/replace) |
-| `lembranca_log` | Inspecciona histórico de recall (filtros: since/kind/topic/limit) |
-
-## Sincronização entre máquinas
-
-Saga foi pensada para te seguir entre PCs (casa, trabalho, portátil). O personal layer (`~/.saga/personal/`) é um directório que tu controlas — torna-o um repo git apontado a um remote teu (privado, recomendado), e o `saga sync` resolve o resto.
-
-### Setup uma vez (na primeira máquina)
+### One-time setup (first machine)
 
 ```bash
 cd ~/.saga/personal
 git init && git add -A && git commit -m "init"
 git branch -M main
-git remote add origin git@github.com:<teu-user>/saga-personal.git   # repo privado
+git remote add origin git@github.com:<your-user>/saga-personal.git    # private repo
 git push -u origin main
 ```
 
-### Cada máquina nova
+### Each new machine
 
 ```bash
-git clone git@github.com:<teu-user>/saga-personal.git ~/.saga/personal
+git clone git@github.com:<your-user>/saga-personal.git ~/.saga/personal
 saga reindex
 ```
 
 ### Day-to-day
 
 ```bash
-saga sync             # pull --rebase + push (auto-commits o que está pendente)
-saga sync --status    # vê o que se passa sem mexer em nada
-saga sync --pull      # só puxa (útil no início da sessão)
-saga sync --push      # só empurra (útil depois de uma rajada de topic_writes)
+saga sync             # pull --rebase + push (auto-commits pending changes)
+saga sync --status    # report state without changing anything
+saga sync --pull      # pull only (useful at session start)
+saga sync --push      # push only (useful after a burst of topic_writes)
 ```
 
-Em conflito, o `saga sync` pára com instruções claras: resolves manualmente com `git rebase --continue` e voltas a chamar `saga sync --push`.
+On conflict, `saga sync` stops with clear instructions: resolve manually, `git rebase --continue`, then re-run `saga sync --push`.
 
-`saga doctor` reporta o estado do sync (remote, branch, ahead/behind, ficheiros pendentes).
+`saga doctor` reports the sync state (remote, branch, ahead/behind, uncommitted files).
 
-## Variáveis de ambiente
+## CLI
 
-| Variável | Default | O que faz |
+| Command | What it does |
+|---|---|
+| `saga init` | Create `.saga/meta.yml` and `.saga/topics/` for a project layer in `cwd` |
+| `saga reindex` | Rebuild the SQLite index from markdown across active layers |
+| `saga sync` | Pull/push the personal layer between machines (`--pull`, `--push`, `--status`, `--no-auto-commit`) |
+| `saga lembrancas` | List recent recall events (filters: `--since`, `--kind`, `--topic`) |
+| `saga doctor` | Diagnose installation, configuration, content, and sync state |
+| `saga mcp` | Run as MCP stdio server (invoked by AI clients, not directly) |
+| `saga hook` | `UserPromptSubmit` hook for Claude Code (reads event JSON from stdin) |
+| `saga setup-claude` | Wire saga into Claude Code (`--apply` registers MCP automatically) |
+| `saga version` | Print version |
+| `saga help` | Help text |
+
+## MCP tools (every compatible AI client)
+
+| Tool | Purpose |
+|---|---|
+| `recall` | Retrieve topic notes (FTS5 + BM25 + recency boost) across active scopes |
+| `topic_read` | Read a single topic note in full by name (slug or title) |
+| `topic_list` | List topic notes visible in the current scope |
+| `topic_write` | Create or update a topic note (default scope=personal; modes: `create` / `append` / `replace`) |
+| `lembranca_log` | Inspect the recall history (filters: `since`, `kind`, `topic`, `limit`) |
+
+## Configuration
+
+| Variable | Default | Meaning |
 |---|---|---|
-| `SAGA_HOME` | `~/.saga` | Localização do personal layer + index.db |
-| `SAGA_DB_PATH` | `$SAGA_HOME/index.db` | Override do path do índice |
-| `SAGA_BASELINE_MAX_TOKENS` | `400` | Limite de tokens injectados no `<saga-identity>` por prompt |
+| `SAGA_HOME` | `~/.saga` | Personal layer + index.db location |
+| `SAGA_DB_PATH` | `$SAGA_HOME/index.db` | Override the index path |
+| `SAGA_BASELINE_MAX_TOKENS` | `400` | Token budget for `<saga-identity>` injection per prompt |
+
+## Tested clients
+
+| Client | MCP | Auto-injection hook |
+|---|---|---|
+| [Claude Code](https://claude.com/claude-code) | ✓ | ✓ (`UserPromptSubmit`) |
+| [Cursor](https://cursor.com) | ✓ | — (manual `recall` / `topic_read` calls) |
+| [Windsurf](https://windsurf.com) | ✓ | — |
+| [Antigravity](https://antigravity.google.com) | ✓ | — |
+
+Every MCP-conformant client should work; auto-injection on each prompt is Claude Code-only because no other client exposes a comparable hook.
 
 ## Troubleshooting
 
-**`saga: command not found` num terminal mas funciona noutro.**
-Tipicamente o IDE (Cursor / VS Code / Antigravity) abre login shell que lê `.zprofile` mas não `.zshrc`. Adiciona o export aos dois ficheiros (ver Quick Start §2).
+**`saga: command not found` in one terminal but works in another.**
+Often an IDE (Cursor / VS Code / Antigravity) opens a login shell that reads `.zprofile` but not `.zshrc`. Add the `PATH` export to both files.
 
-**Hook não dispara depois de configurar settings.json.**
-O Claude Code não recarrega settings em runtime. Tens que `Cmd+Q` e reabrir.
+**Hook does not fire after editing `settings.json`.**
+Claude Code does not reload settings at runtime. `Cmd+Q` and reopen.
 
-**`saga doctor` diz "saga MCP server not registered".**
-O Claude Code lê MCP servers de `~/.claude.json` (não de `~/.claude/settings.json`). Corre `saga setup-claude --apply` ou manualmente `claude mcp add saga -s user -- $(which saga) mcp`. Se o `claude` CLI não estiver no PATH, instala/repara o Claude Code primeiro.
+**`saga doctor` reports "saga MCP server not registered".**
+Claude Code reads MCP servers from `~/.claude.json` (not `~/.claude/settings.json`). Run `saga setup-claude --apply`, or manually `claude mcp add saga -s user -- $(which saga) mcp`. If the `claude` CLI is missing, install / repair Claude Code first.
 
-**`saga doctor` diz "UserPromptSubmit hook not wired".**
-Não fizeste o merge do snippet do hook no `~/.claude/settings.json`. Re-corre `saga setup-claude` e mete a secção `hooks` sem apagar outras que já tenhas.
+**`saga doctor` reports "UserPromptSubmit hook not wired".**
+You did not merge the hook snippet into `~/.claude/settings.json`. Re-run `saga setup-claude` and add the `hooks` block without removing any existing entries.
 
-**`saga reindex` reporta `failed=N` em alguns ficheiros.**
-Frontmatter inválido em `.md` files. Corre `saga reindex` em modo verbose para ver paths exactos; abre o ficheiro e valida YAML.
+**`saga reindex` reports `failed=N`.**
+Invalid YAML frontmatter in some `.md` files. Run `saga reindex` to see exact paths; open and validate the YAML.
 
-## Documentação
+## Architecture
 
-- [docs/DESIGN_v2.md](docs/DESIGN_v2.md) — arquitectura técnica (storage, MCP, SQL).
-- [docs/COGNITIVE_MODEL.md](docs/COGNITIVE_MODEL.md) — modelo cognitivo (5 camadas + 2 transversais), erros evitados, anti-creep.
-- [docs/PLAN.md](docs/PLAN.md) — iterações e testes de utilidade.
-- [docs/ROADMAP_v2.md](docs/ROADMAP_v2.md) — tasks granulares com critérios e esforço.
-- [docs/DESIGN.md](docs/DESIGN.md) + [docs/ROADMAP.md](docs/ROADMAP.md) — v1 histórica, mantidas para referência.
-
-## Stack (LOCKED)
-
-| Componente | Escolha |
+| Layer | Choice |
 |---|---|
-| Linguagem | Go 1.22+ |
-| MCP transport | JSON-RPC 2.0 stdio (implementação interna em `internal/mcp/`, ~200 LOC) |
-| SQLite | `modernc.org/sqlite` (puro Go, sem CGO; cross-compile trivial) |
-| Vector (Phase 1.5) | `sqlite-vec` extension (carregado lazy; `embedding BLOB` reservado desde dia 1) |
+| Language | Go 1.25+ |
+| MCP transport | JSON-RPC 2.0 stdio (in-tree, ~200 LOC, no third-party MCP SDK) |
+| Index | SQLite via [`modernc.org/sqlite`](https://modernc.org/sqlite) (pure Go, no CGO, cross-compiles trivially) |
+| Search | FTS5 + BM25 + custom recency boost; `sanitizeFTSQuery` against keyword injection |
+| Vector (Phase 1.5) | `sqlite-vec` (lazy-loaded; `embedding BLOB` column reserved from day one) |
 | Embeddings (Phase 1.5) | Ollama local, `nomic-embed-text` |
-
-## Layout
 
 ```
 saga/
-├── cmd/saga/                  # single binary, subcomandos em cmd_*.go
+├── cmd/saga/                  single binary, subcommands in cmd_*.go
 ├── internal/
-│   ├── saga/                  # core: parser, indexer, layers, service, baseline, lembrança
-│   │   └── migrations/*.sql   # schema embedded em binário
-│   └── mcp/                   # JSON-RPC 2.0 stdio server
-└── docs/
+│   ├── saga/                  core: parser, indexer, layers, service, baseline, lembrança, sync
+│   │   └── migrations/*.sql   schema embedded in the binary
+│   └── mcp/                   JSON-RPC 2.0 stdio server
+└── docs/                      design notes
 ```
 
-## Para developers
+## Documentation
+
+- [docs/DESIGN_v2.md](docs/DESIGN_v2.md) — technical architecture (storage, MCP, SQL).
+- [docs/COGNITIVE_MODEL.md](docs/COGNITIVE_MODEL.md) — cognitive model (5 layers + 2 cross-cutting); failure modes, anti-creep.
+- [docs/PLAN.md](docs/PLAN.md) — iterations and utility tests.
+- [docs/ROADMAP_v2.md](docs/ROADMAP_v2.md) — granular tasks with acceptance criteria.
+
+## Building from source
 
 ```bash
-go build ./...      # compila tudo
-go test ./...       # corre toda a suite
+go build ./...      # compiles all packages
+go test ./...       # runs the test suite
 go run ./cmd/saga version
 ```
 
-Branch principal: `main`.
+Main branch: `main`.
+
+## Contributing
+
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the conventions, [SECURITY.md](SECURITY.md) for vulnerability reporting, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community expectations.
+
+## License
+
+[Apache-2.0](LICENSE) © 2026 Jorge Morais
