@@ -114,7 +114,9 @@ var sagaTools = []mcp.Tool{
 				"body":      { "type": "string", "description": "Markdown body of the note." },
 				"mode":      { "type": "string", "enum": ["create","append","replace"], "description": "Default: append if exists, else create." },
 				"references": { "type": "array", "items": { "type": "object", "properties": { "path": { "type": "string" }, "lines": { "type": "string" }, "blame_hash": { "type": "string" } } }, "description": "File references for staleness tracking." },
-				"type":      { "type": "string", "enum": ["topic","profile","preference","policy","convention","fact","workflow","runbook","skill","incident","investigation","decision","observation","hypothesis"], "description": "Default: topic. The first four (profile, preference, policy, topic) have specialised behaviour in v1.0; the rest are accepted opaque per spec §4 and behave like topic for retrieval." }
+				"type":            { "type": "string", "enum": ["topic","profile","preference","policy","convention","fact","workflow","runbook","skill","incident","investigation","decision","observation","hypothesis"], "description": "Default: topic. The first four (profile, preference, policy, topic) have specialised behaviour in v1.0; the rest are accepted opaque per spec §4 and behave like topic for retrieval." },
+				"allow_secret":    { "type": "boolean", "description": "Set ONLY when intentionally persisting credential-shaped strings (e.g. a topic about a token format). Without this, AWS keys, SSH private keys, JWTs, and similar patterns are blocked at write time." },
+				"force_duplicate": { "type": "boolean", "description": "Suppress the similarity warning. Set when the new topic is genuinely distinct despite high title overlap with an existing one." }
 			},
 			"required": ["name", "body"]
 		}`),
@@ -218,8 +220,15 @@ func dispatchTool(svc *saga.Service) mcp.Handler {
 			if err != nil {
 				return mcp.ErrorResult(err.Error()), nil
 			}
-			return mcp.TextResult(fmt.Sprintf("%s topic %q in scope %q\n%s",
-				res.Action, p.Name, res.Scope, res.Path)), nil
+			out := fmt.Sprintf("%s topic %q in scope %q\n%s",
+				res.Action, p.Name, res.Scope, res.Path)
+			if res.Warning != nil {
+				out += fmt.Sprintf("\n\nwarning: %s — %s\ncandidates:", res.Warning.Kind, res.Warning.Hint)
+				for _, c := range res.Warning.Candidates {
+					out += fmt.Sprintf("\n  - %s (%s)", c.Title, c.ID)
+				}
+			}
+			return mcp.TextResult(out), nil
 
 		default:
 			return mcp.ErrorResult("unknown tool: " + name), nil

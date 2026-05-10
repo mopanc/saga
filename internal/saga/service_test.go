@@ -165,6 +165,138 @@ func TestService_TopicWrite_unknownScopeRejected(t *testing.T) {
 	}
 }
 
+func TestService_TopicWrite_secretBlockedByDefault(t *testing.T) {
+	svc, _ := setupServiceTest(t)
+	_, err := svc.TopicWrite(TopicWriteArgs{
+		Name:  "credentials note",
+		Scope: "personal",
+		Body:  "the prod key is AKIAIOSFODNN7EXAMPLE — rotate weekly",
+	})
+	if err == nil {
+		t.Fatal("expected secret-block error")
+	}
+	if !strings.Contains(err.Error(), "secret pattern detected") {
+		t.Errorf("error = %q, want secret-pattern message", err.Error())
+	}
+}
+
+func TestService_TopicWrite_secretAllowedWithFlag(t *testing.T) {
+	svc, _ := setupServiceTest(t)
+	_, err := svc.TopicWrite(TopicWriteArgs{
+		Name:        "credentials format note",
+		Scope:       "personal",
+		Body:        "AKIA prefix marks AWS access keys (e.g. AKIAIOSFODNN7EXAMPLE).",
+		AllowSecret: true,
+	})
+	if err != nil {
+		t.Fatalf("AllowSecret=true should bypass detection: %v", err)
+	}
+}
+
+func TestService_TopicWrite_similarityWarning(t *testing.T) {
+	svc, _ := setupServiceTest(t)
+	if _, err := svc.TopicWrite(TopicWriteArgs{
+		Name: "stream cache for SSE", Scope: "personal", Body: "first version",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := svc.TopicWrite(TopicWriteArgs{
+		Name: "stream cache for sse handlers", Scope: "personal", Body: "second variant",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Warning == nil {
+		t.Fatal("expected a similarity warning when titles share most tokens")
+	}
+	if res.Warning.Kind != "similar_topic_found" {
+		t.Errorf("warning kind = %q", res.Warning.Kind)
+	}
+	if len(res.Warning.Candidates) == 0 {
+		t.Error("warning has no candidates")
+	}
+	if res.Warning.Hint == "" {
+		t.Error("warning hint is empty")
+	}
+}
+
+func TestService_TopicWrite_similarityNoWarnOnDistinctTitles(t *testing.T) {
+	svc, _ := setupServiceTest(t)
+	if _, err := svc.TopicWrite(TopicWriteArgs{
+		Name: "stream cache base", Scope: "personal", Body: "x",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := svc.TopicWrite(TopicWriteArgs{
+		Name: "auth flow rewrite", Scope: "personal", Body: "y",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Warning != nil {
+		t.Errorf("unexpected warning between distinct titles: %+v", res.Warning)
+	}
+}
+
+func TestService_TopicWrite_similaritySuppressedByForceDuplicate(t *testing.T) {
+	svc, _ := setupServiceTest(t)
+	if _, err := svc.TopicWrite(TopicWriteArgs{
+		Name: "stream cache for SSE", Scope: "personal", Body: "first",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := svc.TopicWrite(TopicWriteArgs{
+		Name:           "stream cache for sse handlers",
+		Scope:          "personal",
+		Body:           "second",
+		ForceDuplicate: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Warning != nil {
+		t.Errorf("ForceDuplicate=true should suppress; got %+v", res.Warning)
+	}
+}
+
+func TestService_TopicWrite_similarityIgnoresSelfOnUpdate(t *testing.T) {
+	svc, _ := setupServiceTest(t)
+	if _, err := svc.TopicWrite(TopicWriteArgs{
+		Name: "stream cache base", Scope: "personal", Body: "first",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Append-mode (default) on the same name reads the existing topic — the
+	// similarity check must not warn about the topic being updated.
+	res, err := svc.TopicWrite(TopicWriteArgs{
+		Name: "stream cache base", Scope: "personal", Body: "second",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Warning != nil {
+		t.Errorf("self update warned about itself: %+v", res.Warning)
+	}
+}
+
+func TestTitleJaccard_basicShape(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want float64
+	}{
+		{"", "", 0},
+		{"identical", "identical", 1.0},
+		{"foo bar", "foo bar baz", float64(2) / float64(3)},
+		{"foo", "bar", 0},
+	}
+	for _, c := range cases {
+		got := titleJaccard(c.a, c.b)
+		if got != c.want {
+			t.Errorf("titleJaccard(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
 func TestService_TopicWrite_replace(t *testing.T) {
 	svc, _ := setupServiceTest(t)
 	if _, err := svc.TopicWrite(TopicWriteArgs{
