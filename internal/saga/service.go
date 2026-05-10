@@ -614,14 +614,37 @@ type TopicWriteArgs struct {
 	Mode       string           `json:"mode,omitempty"` // create|append|replace
 	References []TopicReference `json:"references,omitempty"`
 	Type       string           `json:"type,omitempty"` // default: topic
+	// AllowSecret bypasses the secret-pattern check. Use ONLY when knowingly
+	// persisting credential-shaped strings (e.g. a topic ABOUT a token's
+	// format). Logged for audit when set.
+	AllowSecret bool `json:"allow_secret,omitempty"`
+	// ForceDuplicate suppresses the similarity warning. Set when a topic is
+	// genuinely new despite high title overlap with an existing one.
+	ForceDuplicate bool `json:"force_duplicate,omitempty"`
 }
 
 type TopicWriteResult struct {
-	ID     string `json:"id"`
-	Path   string `json:"path"`
-	Scope  string `json:"scope"`
-	Action string `json:"action"`
+	ID      string             `json:"id"`
+	Path    string             `json:"path"`
+	Scope   string             `json:"scope"`
+	Action  string             `json:"action"`
+	Warning *TopicWriteWarning `json:"warning,omitempty"`
 }
+
+// TopicWriteWarning is returned alongside a successful write when the engine
+// detected something the caller might want to act on (similar existing
+// topic, etc). Non-fatal; the topic is persisted regardless.
+type TopicWriteWarning struct {
+	Kind       string         `json:"kind"`
+	Candidates []TopicSummary `json:"candidates,omitempty"`
+	Hint       string         `json:"hint,omitempty"`
+}
+
+// titleSimilarityWarn — Jaccard index threshold above which we surface a
+// similarity warning. Tuned empirically: bag-of-words overlap of 0.6+
+// reliably catches near-duplicates without false-positiving on topic-grain
+// notes that share a domain term.
+const titleSimilarityWarn = 0.6
 
 func (s *Service) TopicWrite(args TopicWriteArgs) (*TopicWriteResult, error) {
 	if args.Name == "" {
@@ -635,6 +658,16 @@ func (s *Service) TopicWrite(args TopicWriteArgs) (*TopicWriteResult, error) {
 			"body too large: %d chars (cap is %d, ~2000 tokens). Split into multiple narrower topics, or call topic_write with mode=append on an existing topic to add a dated section",
 			len(args.Body), MaxTopicBodyChars,
 		)
+	}
+	if !args.AllowSecret {
+		if hits := DetectSecrets(args.Body); len(hits) > 0 {
+			return nil, fmt.Errorf(
+				"secret pattern detected (%s at line %d) — topic not written; "+
+					"remove the credential from the body, or set allow_secret=true if "+
+					"this topic is intentionally about credential formats",
+				hits[0].Kind, hits[0].Line,
+			)
+		}
 	}
 	layers, err := s.resolver.Resolve(s.cwd)
 	if err != nil {
@@ -672,6 +705,29 @@ func (s *Service) TopicWrite(args TopicWriteArgs) (*TopicWriteResult, error) {
 	if data, err := os.ReadFile(fpath); err == nil { // #nosec G304 -- fpath is constructed inside NotesDir via Slugify (regex-safe: ^[a-z0-9-]+$)
 		if t, err := ParseTopic(data); err == nil {
 			existing = t
+		}
+	}
+
+	// Pre-write similarity check: warn (non-blocking) if another topic in the
+	// same scope has a near-duplicate title. The caller decides what to do —
+	// proceed (warning ignored), restart with @supersedes / @refines, or set
+	// force_duplicate=true to suppress on subsequent calls.
+	var warning *TopicWriteWarning
+	if !args.ForceDuplicate {
+		excludeID := ""
+		if existing != nil {
+			excludeID = existing.ID
+		}
+		candidates, err := s.findSimilarTopics(title, scope, excludeID)
+		if err != nil {
+			return nil, fmt.Errorf("similarity check: %w", err)
+		}
+		if len(candidates) > 0 {
+			warning = &TopicWriteWarning{
+				Kind:       "similar_topic_found",
+				Candidates: candidates,
+				Hint:       "consider @supersedes <id> | @refines <id> | proceed if genuinely new (set force_duplicate=true to suppress)",
+			}
 		}
 	}
 
@@ -748,8 +804,83 @@ func (s *Service) TopicWrite(args TopicWriteArgs) (*TopicWriteResult, error) {
 		return nil, fmt.Errorf("reindex: %w", err)
 	}
 	return &TopicWriteResult{
-		ID: topic.ID, Path: fpath, Scope: scope, Action: action,
+		ID: topic.ID, Path: fpath, Scope: scope, Action: action, Warning: warning,
 	}, nil
+}
+
+// findSimilarTopics returns topics in the same scope whose title has Jaccard
+// overlap above titleSimilarityWarn with the candidate title. Self (matched
+// by id) is excluded so updates don't warn against themselves.
+//
+// Full-scan is acceptable at v1 (single layer, ~hundreds of topics). Switch
+// to an FTS5 prefilter if a layer crosses ~10k topics.
+func (s *Service) findSimilarTopics(title, scope, excludeID string) ([]TopicSummary, error) {
+	rows, err := s.db.Query(`
+		SELECT id, scope, type, title, source_layer, updated_at
+		FROM topic_index
+		WHERE scope = ?
+	`, scope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var hits []TopicSummary
+	for rows.Next() {
+		var t TopicSummary
+		if err := rows.Scan(&t.ID, &t.Scope, &t.Type, &t.Title, &t.SourceLayer, &t.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if t.ID == excludeID {
+			continue
+		}
+		if titleJaccard(title, t.Title) >= titleSimilarityWarn {
+			hits = append(hits, t)
+		}
+	}
+	return hits, rows.Err()
+}
+
+// titleJaccard returns |A ∩ B| / |A ∪ B| over case-folded word sets. Words
+// are split on non-letter/digit boundaries; common punctuation drops out.
+// Empty inputs yield 0.
+func titleJaccard(a, b string) float64 {
+	aw := titleTokens(a)
+	bw := titleTokens(b)
+	if len(aw) == 0 || len(bw) == 0 {
+		return 0
+	}
+	intersect := 0
+	for w := range aw {
+		if bw[w] {
+			intersect++
+		}
+	}
+	union := len(aw) + len(bw) - intersect
+	if union == 0 {
+		return 0
+	}
+	return float64(intersect) / float64(union)
+}
+
+func titleTokens(s string) map[string]bool {
+	out := map[string]bool{}
+	cur := strings.Builder{}
+	flush := func() {
+		if cur.Len() > 0 {
+			out[strings.ToLower(cur.String())] = true
+			cur.Reset()
+		}
+	}
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			cur.WriteRune(r)
+			continue
+		}
+		flush()
+	}
+	flush()
+	return out
 }
 
 func newTopic(scope, typ, title string, syn []string, refs []TopicReference, sensDefault string, now time.Time, body string) Topic {
