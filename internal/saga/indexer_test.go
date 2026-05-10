@@ -183,6 +183,137 @@ func TestIndexLayer_scopeMismatchRejected(t *testing.T) {
 	}
 }
 
+const sampleTopicWithRelations = `---
+id: 01HXY5KZQVJ8M3R7ABCDEFXYZ3
+scope: project:demo
+type: topic
+title: Has relations
+sensitivity: internal
+confidence: proposed
+created_at: 2026-04-15T09:00:00Z
+updated_at: 2026-04-15T09:00:00Z
+relations:
+  - { op: "@supersedes",   target: "01HXY5KZQVJ8M3R7ABCDEFGHIJ" }
+  - { op: "@derived_from", target: "external-investigation", note: "see linked source" }
+---
+
+Body content.
+`
+
+func TestIndexLayer_persistsRelations(t *testing.T) {
+	db, err := OpenDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	layer := setupProjectLayer(t, "project:demo", map[string]string{
+		"mjpeg-performance.md": sampleTopic,
+		"with-relations.md":    sampleTopicWithRelations,
+	})
+
+	if _, err := db.IndexLayer(layer); err != nil {
+		t.Fatalf("IndexLayer: %v", err)
+	}
+
+	var relCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM topic_relation WHERE source_id = ?", "01HXY5KZQVJ8M3R7ABCDEFXYZ3").Scan(&relCount); err != nil {
+		t.Fatal(err)
+	}
+	if relCount != 2 {
+		t.Errorf("topic_relation count for source = %d, want 2", relCount)
+	}
+
+	var op, target string
+	var note *string
+	if err := db.QueryRow(`
+		SELECT op, target_id, note FROM topic_relation
+		WHERE source_id = ? AND op = ?
+	`, "01HXY5KZQVJ8M3R7ABCDEFXYZ3", "@derived_from").Scan(&op, &target, &note); err != nil {
+		t.Fatalf("query relation: %v", err)
+	}
+	if target != "external-investigation" {
+		t.Errorf("target = %q, want external-investigation", target)
+	}
+	if note == nil || *note != "see linked source" {
+		t.Errorf("note = %v, want 'see linked source'", note)
+	}
+}
+
+func TestIndexLayer_relationsReplacedOnReindex(t *testing.T) {
+	db, err := OpenDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	layer := setupProjectLayer(t, "project:demo", map[string]string{
+		"with-relations.md": sampleTopicWithRelations,
+	})
+
+	if _, err := db.IndexLayer(layer); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rewrite file with FEWER relations; reindex must replace, not accumulate.
+	updated := `---
+id: 01HXY5KZQVJ8M3R7ABCDEFXYZ3
+scope: project:demo
+type: topic
+title: Has relations
+sensitivity: internal
+confidence: proposed
+created_at: 2026-04-15T09:00:00Z
+updated_at: 2026-04-15T09:00:00Z
+relations:
+  - { op: "@relates_to", target: "neighbour" }
+---
+
+Body content.
+`
+	if err := os.WriteFile(filepath.Join(layer.NotesDir, "with-relations.md"), []byte(updated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.IndexLayer(layer); err != nil {
+		t.Fatal(err)
+	}
+
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM topic_relation WHERE source_id = ?", "01HXY5KZQVJ8M3R7ABCDEFXYZ3").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("after reindex with 1 relation, count = %d, want 1 (old relations must be cleared)", count)
+	}
+}
+
+func TestIndexLayer_relationsCascadeOnTopicDelete(t *testing.T) {
+	db, err := OpenDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	layer := setupProjectLayer(t, "project:demo", map[string]string{
+		"with-relations.md": sampleTopicWithRelations,
+	})
+	if _, err := db.IndexLayer(layer); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.Exec("DELETE FROM topic_index WHERE id = ?", "01HXY5KZQVJ8M3R7ABCDEFXYZ3"); err != nil {
+		t.Fatal(err)
+	}
+
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM topic_relation WHERE source_id = ?", "01HXY5KZQVJ8M3R7ABCDEFXYZ3").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("relations still present after topic delete: count = %d, want 0", count)
+	}
+}
+
 func TestIndexLayer_emptyNotesDir(t *testing.T) {
 	db, err := OpenDB(":memory:")
 	if err != nil {
