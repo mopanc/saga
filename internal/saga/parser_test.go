@@ -91,6 +91,23 @@ body
 	}
 }
 
+func TestParseTopic_acceptsAllSpecTypes(t *testing.T) {
+	for _, typ := range SpecTypesAll() {
+		src := []byte(`---
+id: 01HXY5KZQVJ8M3R7ABCDEFGHIJ
+scope: personal
+type: ` + typ + `
+title: t
+---
+
+body
+`)
+		if _, err := ParseTopic(src); err != nil {
+			t.Errorf("ParseTopic for type %q: %v", typ, err)
+		}
+	}
+}
+
 func TestParseTopic_relationsAllOperators(t *testing.T) {
 	src := []byte(`---
 id: 01HXY5KZQVJ8M3R7ABCDEFGHIJ
