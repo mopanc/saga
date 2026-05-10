@@ -157,8 +157,14 @@ func emitLensBlock(w io.Writer, cfg *saga.Config, noteCount int, baseline string
 	if len(results) > 0 {
 		fmt.Fprintln(&buf, "<saga-context>")
 		for _, r := range results {
-			fmt.Fprintf(&buf, "<topic name=%q scope=%q confidence=%q file=%q>\n",
+			fmt.Fprintf(&buf, "<topic name=%q scope=%q confidence=%q file=%q",
 				r.Title, r.Scope, r.Confidence, r.FilePath)
+			if len(r.ConflictsWith) > 0 {
+				// Surface @conflicts_with edges so the model knows this topic
+				// has a contested counterpart in the corpus (S0-4).
+				fmt.Fprintf(&buf, " conflicts-with=%q", strings.Join(r.ConflictsWith, ","))
+			}
+			fmt.Fprintln(&buf, ">")
 			if len(r.Synonyms) > 0 {
 				fmt.Fprintf(&buf, "synonyms: %s\n\n", strings.Join(r.Synonyms, ", "))
 			}

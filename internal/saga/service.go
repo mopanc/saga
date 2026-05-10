@@ -33,22 +33,33 @@ type RecallArgs struct {
 	K     int    `json:"k,omitempty"`
 	Scope string `json:"scope,omitempty"`
 	Type  string `json:"type,omitempty"`
+	// IncludeSuperseded — when false (default), topics that are the target of
+	// an active @supersedes edge are excluded from results. Set to true for
+	// audit/debug or to re-surface historical versions.
+	IncludeSuperseded bool `json:"include_superseded,omitempty"`
 }
 
 type TopicSnippet struct {
-	ID          string   `json:"id"`
-	Scope       string   `json:"scope"`
-	Type        string   `json:"type"`
-	Title       string   `json:"title"`
-	Synonyms    []string `json:"synonyms"`
-	FilePath    string   `json:"file_path"`
-	SourceLayer string   `json:"source_layer"`
-	Sensitivity string   `json:"sensitivity"`
-	Confidence  string   `json:"confidence"`
-	CreatedAt   int64    `json:"created_at"`
-	UpdatedAt   int64    `json:"updated_at"`
-	Score       float64  `json:"score"`
+	ID            string   `json:"id"`
+	Scope         string   `json:"scope"`
+	Type          string   `json:"type"`
+	Title         string   `json:"title"`
+	Synonyms      []string `json:"synonyms"`
+	FilePath      string   `json:"file_path"`
+	SourceLayer   string   `json:"source_layer"`
+	Sensitivity   string   `json:"sensitivity"`
+	Confidence    string   `json:"confidence"`
+	CreatedAt     int64    `json:"created_at"`
+	UpdatedAt     int64    `json:"updated_at"`
+	Score         float64  `json:"score"`
+	ConflictsWith []string `json:"conflicts_with,omitempty"`
 }
+
+// refinesScoreBoost — score bump applied to a topic that @refines another.
+// The refiner is more specific / current; both remain injectable (unlike
+// supersedes which excludes the target). Boost is small enough not to
+// override a clear BM25 winner, large enough to break ties.
+const refinesScoreBoost = 0.1
 
 func (s *Service) Recall(args RecallArgs) ([]TopicSnippet, error) {
 	if args.Query == "" {
@@ -145,6 +156,21 @@ func (s *Service) Recall(args RecallArgs) ([]TopicSnippet, error) {
 		return nil, err
 	}
 
+	// Apply relation-aware semantics:
+	//   @supersedes  — exclude target from default recall (S0-3)
+	//   @refines     — boost source score (S0-5)
+	//   @conflicts_with — annotate both sides (S0-4)
+	//
+	// One query covers all three. Cheap: indexed by source_id and target_id;
+	// scoped to the candidate set, not the whole DB.
+	if len(candidates) > 0 {
+		filtered, err := s.applyRelations(candidates, args.IncludeSuperseded)
+		if err != nil {
+			return nil, fmt.Errorf("apply relations: %w", err)
+		}
+		candidates = filtered
+	}
+
 	// Re-rank by combined score (descending) and trim to k.
 	sort.SliceStable(candidates, func(i, j int) bool {
 		return candidates[i].Score > candidates[j].Score
@@ -153,6 +179,314 @@ func (s *Service) Recall(args RecallArgs) ([]TopicSnippet, error) {
 		candidates = candidates[:k]
 	}
 	return candidates, nil
+}
+
+// applyRelations filters and decorates the candidate set using topic_relation
+// edges. See spec §6.2 for operator semantics.
+func (s *Service) applyRelations(candidates []TopicSnippet, includeSuperseded bool) ([]TopicSnippet, error) {
+	ids := make([]any, 0, len(candidates))
+	idIndex := make(map[string]int, len(candidates))
+	for i, c := range candidates {
+		ids = append(ids, c.ID)
+		idIndex[c.ID] = i
+	}
+
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	// We pass the candidate ids twice so source_id IN (...) OR target_id IN (...).
+	args := append(append([]any{}, ids...), ids...)
+	q := fmt.Sprintf(`
+		SELECT source_id, op, target_id
+		FROM topic_relation
+		WHERE source_id IN (%s) OR target_id IN (%s)
+	`, placeholders, placeholders)
+
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	supersededTargets := map[string]bool{}
+	refinerSources := map[string]bool{}
+	conflicts := map[string]map[string]bool{} // dedupe via inner set
+	for rows.Next() {
+		var src, op, tgt string
+		if err := rows.Scan(&src, &op, &tgt); err != nil {
+			return nil, err
+		}
+		switch op {
+		case "@supersedes":
+			supersededTargets[tgt] = true
+		case "@refines":
+			refinerSources[src] = true
+		case "@conflicts_with":
+			if _, ok := idIndex[src]; ok {
+				if conflicts[src] == nil {
+					conflicts[src] = map[string]bool{}
+				}
+				conflicts[src][tgt] = true
+			}
+			if _, ok := idIndex[tgt]; ok {
+				if conflicts[tgt] == nil {
+					conflicts[tgt] = map[string]bool{}
+				}
+				conflicts[tgt][src] = true
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]TopicSnippet, 0, len(candidates))
+	for _, c := range candidates {
+		if !includeSuperseded && supersededTargets[c.ID] {
+			continue
+		}
+		if refinerSources[c.ID] {
+			c.Score += refinesScoreBoost
+		}
+		if peers := conflicts[c.ID]; len(peers) > 0 {
+			c.ConflictsWith = make([]string, 0, len(peers))
+			for p := range peers {
+				c.ConflictsWith = append(c.ConflictsWith, p)
+			}
+			sort.Strings(c.ConflictsWith) // deterministic for tests
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// ----------------------------------------------------------------------------
+// conflicts (S0-4)
+// ----------------------------------------------------------------------------
+
+// ConflictPair — a pair of topics linked by @conflicts_with. Pairs are
+// deduplicated regardless of which side declared the relation first.
+type ConflictPair struct {
+	A    TopicSummary `json:"a"`
+	B    TopicSummary `json:"b"`
+	Note string       `json:"note,omitempty"`
+}
+
+// ListConflicts returns one entry per unique pair across all active layers.
+// Used by `saga conflicts` and by `saga health` (future).
+func (s *Service) ListConflicts() ([]ConflictPair, error) {
+	layers, err := s.resolver.Resolve(s.cwd)
+	if err != nil {
+		return nil, err
+	}
+	if len(layers) == 0 {
+		return nil, nil
+	}
+	scopes := make([]any, 0, len(layers))
+	for _, l := range layers {
+		scopes = append(scopes, l.Scope)
+	}
+	placeholders := strings.Repeat("?,", len(scopes))
+	placeholders = placeholders[:len(placeholders)-1]
+
+	// Order pairs canonically (lower id first) so reciprocal declarations
+	// collapse to one row regardless of who declared the relation.
+	q := fmt.Sprintf(`
+		SELECT DISTINCT
+		       MIN(tr.source_id, tr.target_id) AS lo,
+		       MAX(tr.source_id, tr.target_id) AS hi,
+		       COALESCE(tr.note, '')
+		FROM topic_relation tr
+		JOIN topic_index a ON a.id = tr.source_id AND a.scope IN (%s)
+		JOIN topic_index b ON b.id = tr.target_id AND b.scope IN (%s)
+		WHERE tr.op = '@conflicts_with'
+	`, placeholders, placeholders)
+	args := append(append([]any{}, scopes...), scopes...)
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type pairKey struct{ lo, hi string }
+	pairs := map[pairKey]string{}
+	for rows.Next() {
+		var lo, hi, note string
+		if err := rows.Scan(&lo, &hi, &note); err != nil {
+			return nil, err
+		}
+		key := pairKey{lo, hi}
+		if existing, ok := pairs[key]; !ok || (existing == "" && note != "") {
+			pairs[key] = note
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(pairs) == 0 {
+		return nil, nil
+	}
+
+	// Fetch summary rows for everything we need in a single batch.
+	idSet := make(map[string]bool, len(pairs)*2)
+	for k := range pairs {
+		idSet[k.lo] = true
+		idSet[k.hi] = true
+	}
+	summaries, err := s.lookupSummaries(idSet)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]ConflictPair, 0, len(pairs))
+	for k, note := range pairs {
+		a, ok1 := summaries[k.lo]
+		b, ok2 := summaries[k.hi]
+		if !ok1 || !ok2 {
+			continue
+		}
+		out = append(out, ConflictPair{A: a, B: b, Note: note})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].A.Title != out[j].A.Title {
+			return out[i].A.Title < out[j].A.Title
+		}
+		return out[i].B.Title < out[j].B.Title
+	})
+	return out, nil
+}
+
+func (s *Service) lookupSummaries(idSet map[string]bool) (map[string]TopicSummary, error) {
+	if len(idSet) == 0 {
+		return nil, nil
+	}
+	args := make([]any, 0, len(idSet))
+	for id := range idSet {
+		args = append(args, id)
+	}
+	placeholders := strings.Repeat("?,", len(args))
+	placeholders = placeholders[:len(placeholders)-1]
+	q := fmt.Sprintf(`
+		SELECT id, scope, type, title, source_layer, updated_at
+		FROM topic_index
+		WHERE id IN (%s)
+	`, placeholders)
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]TopicSummary{}
+	for rows.Next() {
+		var t TopicSummary
+		if err := rows.Scan(&t.ID, &t.Scope, &t.Type, &t.Title, &t.SourceLayer, &t.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out[t.ID] = t
+	}
+	return out, rows.Err()
+}
+
+// ----------------------------------------------------------------------------
+// show (chains for S0-3 + S0-5)
+// ----------------------------------------------------------------------------
+
+// ShowRelation describes one edge participating in a topic, with the other
+// end resolved to a summary when known.
+type ShowRelation struct {
+	Direction string        `json:"direction"` // "out" | "in"
+	Op        string        `json:"op"`
+	OtherID   string        `json:"other_id"`
+	Other     *TopicSummary `json:"other,omitempty"`
+	Note      string        `json:"note,omitempty"`
+}
+
+type ShowResult struct {
+	Topic     *Topic         `json:"topic"`
+	Relations []ShowRelation `json:"relations,omitempty"`
+}
+
+// Show resolves a topic by id-or-slug-or-title and returns it plus all its
+// relations (outgoing and incoming), with the other end resolved when known.
+func (s *Service) Show(idOrSlug string) (*ShowResult, error) {
+	if idOrSlug == "" {
+		return nil, fmt.Errorf("id or slug is required")
+	}
+	slugMatch := "%/" + Slugify(idOrSlug) + ".md"
+	var path, id string
+	err := s.db.QueryRow(`
+		SELECT id, file_path FROM topic_index
+		WHERE id = ? OR title = ? OR file_path LIKE ?
+		LIMIT 1
+	`, idOrSlug, idOrSlug, slugMatch).Scan(&id, &path)
+	if err != nil {
+		return nil, fmt.Errorf("topic %q not found", idOrSlug)
+	}
+	content, err := os.ReadFile(path) // #nosec G304 -- path comes from saga's own indexed topic_index
+	if err != nil {
+		return nil, fmt.Errorf("read file: %w", err)
+	}
+	topic, err := ParseTopic(content)
+	if err != nil {
+		return nil, err
+	}
+
+	// Outgoing + incoming edges in one query for symmetry.
+	rows, err := s.db.Query(`
+		SELECT 'out' AS dir, op, target_id, COALESCE(note, '') FROM topic_relation WHERE source_id = ?
+		UNION ALL
+		SELECT 'in'  AS dir, op, source_id, COALESCE(note, '') FROM topic_relation WHERE target_id = ?
+	`, id, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rels []ShowRelation
+	otherIDs := map[string]bool{}
+	for rows.Next() {
+		var r ShowRelation
+		if err := rows.Scan(&r.Direction, &r.Op, &r.OtherID, &r.Note); err != nil {
+			return nil, err
+		}
+		rels = append(rels, r)
+		otherIDs[r.OtherID] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Resolve other-end summaries; dangling targets stay as IDs only.
+	if len(otherIDs) > 0 {
+		ids := make([]any, 0, len(otherIDs))
+		for k := range otherIDs {
+			ids = append(ids, k)
+		}
+		ph := strings.Repeat("?,", len(ids))
+		ph = ph[:len(ph)-1]
+		q := fmt.Sprintf(`SELECT id, scope, type, title, source_layer, updated_at FROM topic_index WHERE id IN (%s)`, ph)
+		rs, err := s.db.Query(q, ids...)
+		if err != nil {
+			return nil, err
+		}
+		summaries := map[string]TopicSummary{}
+		for rs.Next() {
+			var t TopicSummary
+			if err := rs.Scan(&t.ID, &t.Scope, &t.Type, &t.Title, &t.SourceLayer, &t.UpdatedAt); err != nil {
+				_ = rs.Close()
+				return nil, err
+			}
+			summaries[t.ID] = t
+		}
+		_ = rs.Close()
+		for i := range rels {
+			if s, ok := summaries[rels[i].OtherID]; ok {
+				ss := s
+				rels[i].Other = &ss
+			}
+		}
+	}
+
+	return &ShowResult{Topic: topic, Relations: rels}, nil
 }
 
 // ----------------------------------------------------------------------------
