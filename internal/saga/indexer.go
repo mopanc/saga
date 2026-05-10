@@ -152,6 +152,22 @@ func (db *DB) indexFile(path string, layer Layer) error {
 		}
 	}
 
+	// Replace relations. Same upsert-by-replace pattern as references.
+	if _, err := tx.Exec("DELETE FROM topic_relation WHERE source_id = ?", topic.ID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	for _, rel := range topic.Relations {
+		if _, err := tx.Exec(`
+			INSERT INTO topic_relation (source_id, op, target_id, note)
+			VALUES (?, ?, ?, ?)
+			ON CONFLICT(source_id, op, target_id) DO UPDATE SET note = excluded.note
+		`, topic.ID, rel.Op, rel.Target, nullableString(rel.Note)); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("insert topic_relation: %w", err)
+		}
+	}
+
 	return tx.Commit()
 }
 

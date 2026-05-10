@@ -90,3 +90,112 @@ body
 		t.Fatal("expected error for invalid type")
 	}
 }
+
+func TestParseTopic_relationsAllOperators(t *testing.T) {
+	src := []byte(`---
+id: 01HXY5KZQVJ8M3R7ABCDEFGHIJ
+scope: personal
+type: topic
+title: with all operators
+relations:
+  - { op: "@supersedes",     target: "old-foo" }
+  - { op: "@deprecated",     target: "soon-gone" }
+  - { op: "@derived_from",   target: "investigation-x", note: "consolidated" }
+  - { op: "@conflicts_with", target: "rival-view" }
+  - { op: "@relates_to",     target: "neighbour" }
+  - { op: "@refines",        target: "parent-fact" }
+---
+
+body
+`)
+	topic, err := ParseTopic(src)
+	if err != nil {
+		t.Fatalf("ParseTopic: %v", err)
+	}
+	if got, want := len(topic.Relations), 6; got != want {
+		t.Fatalf("relations len = %d, want %d", got, want)
+	}
+	if len(topic.Warnings) != 0 {
+		t.Errorf("expected no warnings, got %v", topic.Warnings)
+	}
+	if topic.Relations[2].Note != "consolidated" {
+		t.Errorf("note not preserved: got %q", topic.Relations[2].Note)
+	}
+}
+
+func TestParseTopic_relationsUnknownOperator(t *testing.T) {
+	src := []byte(`---
+id: 01HXY5KZQVJ8M3R7ABCDEFGHIJ
+scope: personal
+type: topic
+title: unknown op
+relations:
+  - { op: "@invented", target: "future-target" }
+---
+
+body
+`)
+	topic, err := ParseTopic(src)
+	if err != nil {
+		t.Fatalf("ParseTopic: %v (unknown op should warn, not error)", err)
+	}
+	if got, want := len(topic.Relations), 1; got != want {
+		t.Fatalf("relations len = %d, want %d (unknown ops are kept)", got, want)
+	}
+	if len(topic.Warnings) == 0 {
+		t.Fatal("expected a warning for unknown operator")
+	}
+}
+
+func TestParseTopic_relationsMissingOp(t *testing.T) {
+	src := []byte(`---
+id: 01HXY5KZQVJ8M3R7ABCDEFGHIJ
+scope: personal
+type: topic
+title: no op
+relations:
+  - { target: "lonely-target" }
+---
+
+body
+`)
+	if _, err := ParseTopic(src); err == nil {
+		t.Fatal("expected error for relation missing op")
+	}
+}
+
+func TestParseTopic_relationsMissingTarget(t *testing.T) {
+	src := []byte(`---
+id: 01HXY5KZQVJ8M3R7ABCDEFGHIJ
+scope: personal
+type: topic
+title: no target
+relations:
+  - { op: "@supersedes" }
+---
+
+body
+`)
+	if _, err := ParseTopic(src); err == nil {
+		t.Fatal("expected error for relation missing target")
+	}
+}
+
+func TestParseTopic_relationsAbsentField(t *testing.T) {
+	src := []byte(`---
+id: 01HXY5KZQVJ8M3R7ABCDEFGHIJ
+scope: personal
+type: topic
+title: no relations key at all
+---
+
+body
+`)
+	topic, err := ParseTopic(src)
+	if err != nil {
+		t.Fatalf("ParseTopic: %v", err)
+	}
+	if topic.Relations != nil {
+		t.Errorf("expected nil Relations, got %v", topic.Relations)
+	}
+}

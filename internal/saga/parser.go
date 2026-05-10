@@ -25,13 +25,33 @@ type Topic struct {
 	UpdatedBy   string           `yaml:"updated_by,omitempty"`
 	References  []TopicReference `yaml:"references,omitempty"`
 	Related     []string         `yaml:"related,omitempty"`
+	Relations   []Relation       `yaml:"relations,omitempty"`
 	Body        string           `yaml:"-"`
+	Warnings    []string         `yaml:"-"`
 }
 
 type TopicReference struct {
 	Path      string `yaml:"path" json:"path"`
 	Lines     string `yaml:"lines,omitempty" json:"lines,omitempty"`
 	BlameHash string `yaml:"blame_hash" json:"blame_hash"`
+}
+
+// Relation — typed directed link to another topic. See spec §1.3 and §6.
+type Relation struct {
+	Op     string `yaml:"op" json:"op"`
+	Target string `yaml:"target" json:"target"`
+	Note   string `yaml:"note,omitempty" json:"note,omitempty"`
+}
+
+// KnownOperators — the six pure-metadata operators defined in spec §6.2.
+// Unknown operators parse successfully and are stored, but produce a warning.
+var KnownOperators = map[string]bool{
+	"@supersedes":     true,
+	"@deprecated":     true,
+	"@derived_from":   true,
+	"@conflicts_with": true,
+	"@relates_to":     true,
+	"@refines":        true,
 }
 
 var frontmatterDelim = []byte("---\n")
@@ -81,6 +101,18 @@ func ParseTopic(content []byte) (*Topic, error) {
 	case "profile", "preference", "policy", "topic":
 	default:
 		return nil, fmt.Errorf("invalid type %q (want profile|preference|policy|topic)", t.Type)
+	}
+
+	for i, r := range t.Relations {
+		if r.Op == "" {
+			return nil, fmt.Errorf("relations[%d]: missing op", i)
+		}
+		if r.Target == "" {
+			return nil, fmt.Errorf("relations[%d]: missing target", i)
+		}
+		if !KnownOperators[r.Op] {
+			t.Warnings = append(t.Warnings, fmt.Sprintf("relations[%d]: unknown operator %q (accepted as opaque)", i, r.Op))
+		}
 	}
 
 	return &t, nil
