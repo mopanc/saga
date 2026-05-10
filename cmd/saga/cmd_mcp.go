@@ -114,10 +114,19 @@ var sagaTools = []mcp.Tool{
 				"body":      { "type": "string", "description": "Markdown body of the note." },
 				"mode":      { "type": "string", "enum": ["create","append","replace"], "description": "Default: append if exists, else create." },
 				"references": { "type": "array", "items": { "type": "object", "properties": { "path": { "type": "string" }, "lines": { "type": "string" }, "blame_hash": { "type": "string" } } }, "description": "File references for staleness tracking." },
-				"type":      { "type": "string", "enum": ["topic","profile","preference","policy"], "description": "Default: topic." }
+				"type":      { "type": "string", "enum": ["topic","profile","preference","policy","convention","fact","workflow","runbook","skill","incident","investigation","decision","observation","hypothesis"], "description": "Default: topic. The first four (profile, preference, policy, topic) have specialised behaviour in v1.0; the rest are accepted opaque per spec §4 and behave like topic for retrieval." }
 			},
 			"required": ["name", "body"]
 		}`),
+	},
+	{
+		Name: "saga_capabilities",
+		Description: "Declare what this Saga engine offers per the saga-topic spec (spec version, " +
+			"conformance level, types implemented vs accepted-opaque, pure-metadata operators offered, " +
+			"runtime-required operators offered vs specced, retrieval features). Use this when an " +
+			"adopter or another agent needs to capability-negotiate (spec §10) before assuming a " +
+			"behaviour is available. Read-only.",
+		InputSchema: json.RawMessage(`{ "type": "object", "properties": {} }`),
 	},
 	{
 		Name: "lembranca_log",
@@ -180,6 +189,14 @@ func dispatchTool(svc *saga.Service) mcp.Handler {
 				return mcp.ErrorResult(err.Error()), nil
 			}
 			return formatLembrancaLog(entries), nil
+
+		case "saga_capabilities":
+			caps := saga.DescribeCapabilities()
+			payload, err := json.MarshalIndent(caps, "", "  ")
+			if err != nil {
+				return mcp.ErrorResult(err.Error()), nil
+			}
+			return mcp.TextResult(string(payload)), nil
 
 		case "topic_list":
 			var p saga.TopicListArgs

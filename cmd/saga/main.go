@@ -25,6 +25,7 @@ Commands:
   lembrancas       List recent recall events from the index
   conflicts        List @conflicts_with topic pairs in active layers
   show             Display a topic plus its incoming and outgoing relations
+  capabilities     Print engine capability declaration (spec/types/operators)
   doctor           Diagnose installation, config, and content state
   mcp              Run MCP stdio server (invoked by AI clients)
   hook             Run UserPromptSubmit hook (invoked by Claude Code)
@@ -62,6 +63,8 @@ func main() {
 		err = runConflicts(args)
 	case "show":
 		err = runShow(args)
+	case "capabilities":
+		err = runCapabilities(args)
 	case "doctor":
 		err = runDoctor(args)
 	case "mcp":

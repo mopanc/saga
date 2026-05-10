@@ -45,6 +45,8 @@ type Relation struct {
 
 // KnownOperators — the six pure-metadata operators defined in spec §6.2.
 // Unknown operators parse successfully and are stored, but produce a warning.
+// Mirror of PureMetadataOperators in capabilities.go (kept here as a map for
+// O(1) lookup during parsing).
 var KnownOperators = map[string]bool{
 	"@supersedes":     true,
 	"@deprecated":     true,
@@ -52,6 +54,22 @@ var KnownOperators = map[string]bool{
 	"@conflicts_with": true,
 	"@relates_to":     true,
 	"@refines":        true,
+}
+
+// isSpecType reports whether t is in the spec v1.0 type vocabulary
+// (implemented + accepted-opaque). See capabilities.go for the source list.
+func isSpecType(t string) bool {
+	for _, s := range SpecTypesImplemented {
+		if s == t {
+			return true
+		}
+	}
+	for _, s := range SpecTypesAcceptedOpaque {
+		if s == t {
+			return true
+		}
+	}
+	return false
 }
 
 var frontmatterDelim = []byte("---\n")
@@ -97,10 +115,8 @@ func ParseTopic(content []byte) (*Topic, error) {
 		return nil, fmt.Errorf("frontmatter missing required field: title")
 	}
 
-	switch t.Type {
-	case "profile", "preference", "policy", "topic":
-	default:
-		return nil, fmt.Errorf("invalid type %q (want profile|preference|policy|topic)", t.Type)
+	if !isSpecType(t.Type) {
+		return nil, fmt.Errorf("invalid type %q (want one of: %v)", t.Type, SpecTypesAll())
 	}
 
 	for i, r := range t.Relations {
