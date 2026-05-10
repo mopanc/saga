@@ -7,7 +7,7 @@
 [![License: Apache-2.0](https://img.shields.io/github/license/mopanc/saga)](LICENSE)
 [![CodeQL](https://github.com/mopanc/saga/actions/workflows/codeql.yml/badge.svg)](https://github.com/mopanc/saga/actions/workflows/codeql.yml)
 
-> **Saga** is a topic-grained, layered memory layer for AI coding agents. It lets Claude Code, Cursor, Windsurf, Antigravity and any other [Model Context Protocol](https://modelcontextprotocol.io) (MCP) client remember what they learned across sessions — your codebase, your decisions, your preferences — so the next conversation starts where the last one ended.
+> **Stop re-explaining your codebase to AI every session.** Saga is a topic-grained, layered memory layer for AI coding agents. It lets Claude Code, Cursor, Windsurf, Antigravity and any other [Model Context Protocol](https://modelcontextprotocol.io) (MCP) client remember what they learned across sessions — your codebase, your decisions, your preferences — so the next conversation starts where the last one ended.
 
 Local-first. Single static binary. Markdown notes in git, indexed by SQLite. Cross-IDE, cross-machine.
 
@@ -17,16 +17,20 @@ AI coding agents have no memory between sessions. Every conversation starts blan
 
 Saga gives the agent a place to **write durable notes** after an investigation, and a fast retrieval path to **read them back** on the next session. The unit of memory is a curated *topic note* (~500 words, self-contained markdown), not a chunked sentence corpus — because investigation work needs coherent context, not scattered phrases.
 
+Think of it as **git for cognition**: notes are versioned by markdown, related by typed operators (`@supersedes`, `@refines`, `@conflicts_with`), surfaced by ranking that respects what the AI has actually used. The retrieval layer doesn't just *search* relevant memories — it tracks which ones are still canonical, which evolved, and which are superseded.
+
 ## Highlights
 
 - **Topic-grained, not chunk-grained.** ~500-word self-contained notes beat sentence-level chunking for code-investigation workloads.
+- **Typed relations between memories.** Six pure-metadata operators — `@supersedes`, `@refines`, `@deprecated`, `@derived_from`, `@conflicts_with`, `@relates_to` — let the corpus evolve over time without becoming a dumpster.
 - **Layered scopes.** `personal | project | dept | org` — each layer has an independent owner, sync remote, and sensitivity. Personal travels with you; project travels with the repo.
-- **Cross-IDE via MCP.** Five tools (`recall`, `topic_read`, `topic_list`, `topic_write`, `lembranca_log`) exposed over JSON-RPC 2.0 stdio to any MCP client.
+- **Cross-IDE via MCP.** Six tools (`recall`, `topic_read`, `topic_list`, `topic_write`, `lembranca_log`, `saga_capabilities`) exposed over JSON-RPC 2.0 stdio to any MCP client.
 - **Auto-injection on Claude Code.** A `UserPromptSubmit` hook surfaces the relevant topic notes on every prompt so the agent never forgets to look.
 - **Multi-machine sync.** `saga sync` keeps your personal layer in step across Mac / Linux / Windows over your own private git remote.
+- **Versioned, open spec.** [Saga Topic Spec v1.0](docs/spec/saga-topic-v1.md) is published Apache-2.0 and defines the on-disk contract independent of any engine — V8 / ECMAScript model.
 - **Local-first, no telemetry.** SQLite index regenerable from markdown. No cloud, no auth, no vendor lock-in.
 - **Single static binary.** No runtime, no dependencies. macOS / Linux / Windows × amd64 / arm64.
-- **Security-hardened.** `gosec`, `govulncheck`, `gitleaks`, `golangci-lint`, CodeQL — all green in CI.
+- **Hardened by default.** Secret-pattern detection at write time (AWS keys, SSH private keys, JWTs, etc.), similarity warnings on near-duplicates, `sensitivity: confidential` opt-out from sync. `gosec`, `govulncheck`, `gitleaks`, `golangci-lint`, CodeQL — all green in CI.
 
 ## How memory is organised
 
@@ -189,6 +193,9 @@ On conflict, `saga sync` stops with clear instructions: resolve manually, `git r
 | `saga reindex` | Rebuild the SQLite index from markdown across active layers |
 | `saga sync` | Pull/push the personal layer between machines (`--pull`, `--push`, `--status`, `--no-auto-commit`) |
 | `saga lembrancas` | List recent recall events (filters: `--since`, `--kind`, `--topic`) |
+| `saga conflicts` | List unresolved `@conflicts_with` topic pairs in active layers |
+| `saga show` | Display a topic plus its incoming and outgoing relations |
+| `saga capabilities` | Print engine capability declaration (spec version, conformance level, types, operators) |
 | `saga doctor` | Diagnose installation, configuration, content, and sync state |
 | `saga mcp` | Run as MCP stdio server (invoked by AI clients, not directly) |
 | `saga hook` | `UserPromptSubmit` hook for Claude Code (reads event JSON from stdin) |
@@ -200,11 +207,12 @@ On conflict, `saga sync` stops with clear instructions: resolve manually, `git r
 
 | Tool | Purpose |
 |---|---|
-| `recall` | Retrieve topic notes (FTS5 + BM25 + recency boost) across active scopes |
+| `recall` | Retrieve topic notes (FTS5 + BM25 + recency + relation-aware ranking) across active scopes |
 | `topic_read` | Read a single topic note in full by name (slug or title) |
 | `topic_list` | List topic notes visible in the current scope |
-| `topic_write` | Create or update a topic note (default scope=personal; modes: `create` / `append` / `replace`) |
+| `topic_write` | Create or update a topic note (default scope=personal; modes: `create` / `append` / `replace`). Blocks credential-shaped content by default; warns on near-duplicate titles |
 | `lembranca_log` | Inspect the recall history (filters: `since`, `kind`, `topic`, `limit`) |
+| `saga_capabilities` | Engine capability declaration for capability-negotiation (spec §10) |
 
 ## Performance & limits
 
