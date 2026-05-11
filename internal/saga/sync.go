@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -20,9 +22,20 @@ type SyncOptions struct {
 	PullOnly     bool
 	PushOnly     bool
 	NoAutoCommit bool
+	// DryRun reports what would be pushed and excluded without staging,
+	// committing, pulling or pushing. Useful before a real sync.
+	DryRun bool
 	// CommitMsg overrides the default auto-commit message
 	// ("saga: sync <RFC3339>"). Empty string uses the default.
 	CommitMsg string
+}
+
+// ExcludedTopic describes a topic that sync kept local-only because its
+// frontmatter declares `sensitivity: confidential`.
+type ExcludedTopic struct {
+	ID       string
+	Title    string
+	FilePath string // relative to layerDir, forward-slashed
 }
 
 // SyncResult summarises what Sync did.
@@ -35,6 +48,16 @@ type SyncResult struct {
 	Pushed     bool
 	PullOutput string
 	PushOutput string
+	// ExcludedConfidential lists topics filtered out of the push set because
+	// their frontmatter declares `sensitivity: confidential`.
+	ExcludedConfidential []ExcludedTopic
+	// AlreadyPushedWarnings lists confidential topics whose files already
+	// exist in origin/<branch> — marking confidential locally does not
+	// retroactively remove them from the remote.
+	AlreadyPushedWarnings []ExcludedTopic
+	// PendingAdds is populated only under DryRun: paths git status reports
+	// as pending, after confidential exclusions have been applied.
+	PendingAdds []string
 }
 
 // ErrNoRemote means the personal layer is not configured as a syncable git repo.
@@ -75,8 +98,31 @@ func Sync(ctx context.Context, layerDir string, opts SyncOptions) (*SyncResult, 
 		return nil, fmt.Errorf("personal layer is in a detached HEAD state; checkout a branch first")
 	}
 
+	// Identify confidential topics — kept local-only, never staged for push.
+	excluded, err := scanConfidentialTopics(layerDir)
+	if err != nil {
+		return res, fmt.Errorf("scan confidential topics: %w", err)
+	}
+	res.ExcludedConfidential = excluded
+	excludedPaths := make([]string, len(excluded))
+	for i, e := range excluded {
+		excludedPaths[i] = e.FilePath
+	}
+	if len(excluded) > 0 {
+		res.AlreadyPushedWarnings = alreadyPushedConfidential(ctx, layerDir, res.Branch, excluded)
+	}
+
+	if opts.DryRun {
+		pending, perr := computePendingAdds(ctx, layerDir, excludedPaths)
+		if perr != nil {
+			return res, fmt.Errorf("dry-run plan: %w", perr)
+		}
+		res.PendingAdds = pending
+		return res, nil
+	}
+
 	if !opts.NoAutoCommit && !opts.PullOnly {
-		committed, err := gitAutoCommit(ctx, layerDir, opts.CommitMsg)
+		committed, err := gitAutoCommit(ctx, layerDir, opts.CommitMsg, excludedPaths)
 		if err != nil {
 			return res, fmt.Errorf("auto-commit: %w", err)
 		}
@@ -171,8 +217,19 @@ func readGitRemote(ctx context.Context, dir string) (string, error) {
 	return remote, nil
 }
 
-func gitAutoCommit(ctx context.Context, dir, msg string) (bool, error) {
-	if _, err := gitOutput(ctx, dir, "add", "-A"); err != nil {
+func gitAutoCommit(ctx context.Context, dir, msg string, excluded []string) (bool, error) {
+	args := []string{"add", "-A"}
+	if len(excluded) > 0 {
+		// `git add -A -- . :(exclude)foo :(exclude)bar` stages everything except
+		// the named paths. Excluded confidential files stay on disk, untracked
+		// (if new) or unstaged (if previously committed — separate `--purge`
+		// workflow handles retroactive removal).
+		args = append(args, "--", ".")
+		for _, p := range excluded {
+			args = append(args, ":(exclude)"+p)
+		}
+	}
+	if _, err := gitOutput(ctx, dir, args...); err != nil {
 		return false, fmt.Errorf("git add: %w", err)
 	}
 	// `git diff --cached --quiet` exits 0 when nothing staged, 1 when staged.
@@ -187,6 +244,111 @@ func gitAutoCommit(ctx context.Context, dir, msg string) (bool, error) {
 		return false, fmt.Errorf("git commit: %w", err)
 	}
 	return true, nil
+}
+
+// scanConfidentialTopics walks the layer's notes directory and returns topics
+// whose frontmatter declares `sensitivity: confidential`. Paths returned are
+// relative to layerDir using forward slashes (suitable for git pathspecs).
+func scanConfidentialTopics(layerDir string) ([]ExcludedTopic, error) {
+	notesDir, err := resolveNotesDir(layerDir)
+	if err != nil {
+		return nil, err
+	}
+	var out []ExcludedTopic
+	walkErr := filepath.WalkDir(notesDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
+			return nil
+		}
+		content, rerr := os.ReadFile(path) // #nosec G304 -- path is rooted at the layer's notes dir resolved from internal config
+		if rerr != nil {
+			return nil
+		}
+		topic, perr := ParseTopic(content)
+		if perr != nil {
+			return nil
+		}
+		if topic.Sensitivity != "confidential" {
+			return nil
+		}
+		rel, _ := filepath.Rel(layerDir, path)
+		out = append(out, ExcludedTopic{
+			ID:       topic.ID,
+			Title:    topic.Title,
+			FilePath: filepath.ToSlash(rel),
+		})
+		return nil
+	})
+	if walkErr != nil && !errors.Is(walkErr, fs.ErrNotExist) {
+		return nil, walkErr
+	}
+	return out, nil
+}
+
+// resolveNotesDir returns the absolute notes directory for layerDir, defaulting
+// to `<layerDir>/topics/` when meta.yml is missing or sets no notes_dir.
+func resolveNotesDir(layerDir string) (string, error) {
+	layer, err := loadLayer(layerDir)
+	if err != nil {
+		// No parseable meta.yml — fall back to the convention.
+		return filepath.Join(layerDir, "topics"), nil
+	}
+	return layer.NotesDir, nil
+}
+
+// alreadyPushedConfidential reports which excluded confidential paths already
+// exist in origin/<branch>. Marking a topic confidential locally does not
+// retroactively remove it from the remote — those files require an explicit
+// purge workflow (out of scope for v1).
+func alreadyPushedConfidential(ctx context.Context, dir, branch string, excluded []ExcludedTopic) []ExcludedTopic {
+	if branch == "" || len(excluded) == 0 {
+		return nil
+	}
+	var warnings []ExcludedTopic
+	for _, e := range excluded {
+		out, err := gitOutput(ctx, dir, "ls-tree", "--name-only", "origin/"+branch, "--", e.FilePath)
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(out) != "" {
+			warnings = append(warnings, e)
+		}
+	}
+	return warnings
+}
+
+// computePendingAdds runs `git status --porcelain=v1` and returns paths that
+// would be staged by `git add -A`, minus the excluded confidential paths.
+// Used by DryRun to render a plan.
+func computePendingAdds(ctx context.Context, dir string, excluded []string) ([]string, error) {
+	// --untracked-files=all expands untracked directories so each file appears
+	// individually; without it git status emits the directory as one line and
+	// the excluded pathspec match would miss its children.
+	out, err := gitOutput(ctx, dir, "status", "--porcelain=v1", "--untracked-files=all")
+	if err != nil {
+		return nil, err
+	}
+	skip := make(map[string]struct{}, len(excluded))
+	for _, p := range excluded {
+		skip[p] = struct{}{}
+	}
+	var pending []string
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if len(line) <= 3 {
+			continue
+		}
+		path := line[3:]
+		if _, drop := skip[path]; drop {
+			continue
+		}
+		pending = append(pending, path)
+	}
+	return pending, nil
 }
 
 func unmergedFiles(ctx context.Context, dir string) ([]string, error) {
