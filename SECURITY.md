@@ -42,8 +42,10 @@ you can decide whether those assumptions match your environment.
   `sensitivity: confidential` are never staged or pushed by `saga sync`. They
   live only on the machine they were written on.
 - **Common Go supply-chain issues.** CI runs `gosec`, `govulncheck`,
-  `gitleaks`, `golangci-lint` and CodeQL on every PR. Releases are signed
-  Cosign-keyless and ship with a CycloneDX SBOM.
+  `gitleaks`, `golangci-lint` and CodeQL on every PR. Cosign-keyless release
+  signing and CycloneDX SBOM publication are on the immediate roadmap and
+  will land in the next tagged release; release artifacts before that point
+  carry only the SHA-256 checksum manifest.
 
 ### What Saga does *not* protect against
 

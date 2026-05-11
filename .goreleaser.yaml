@@ -47,6 +47,42 @@ checksum:
   name_template: "checksums.txt"
   algorithm: sha256
 
+# CycloneDX SBOM per archive. Requires `syft` on the runner — the release
+# workflow installs it via anchore/sbom-action before goreleaser runs.
+sboms:
+  - id: archive
+    artifacts: archive
+    documents:
+      - "${artifact}.sbom.cdx.json"
+    cmd: syft
+    args:
+      - "$artifact"
+      - "--output"
+      - "cyclonedx-json=$document"
+
+# Cosign keyless signing of the checksums manifest via the OIDC ambient
+# identity of the GitHub Actions runner. Verifying:
+#
+#   cosign verify-blob \
+#     --certificate-identity-regexp 'https://github.com/mopanc/saga/' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#     --certificate checksums.txt.pem \
+#     --signature checksums.txt.sig \
+#     checksums.txt
+signs:
+  - id: checksums-keyless
+    cmd: cosign
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--yes"
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+    artifacts: checksum
+    output: true
+
 snapshot:
   # The previous template `{{ incpatch .Version }}-snapshot` requires .Version
   # to be valid SemVer. Until we cut our first SemVer tag (v1.0.0-beta.1),
