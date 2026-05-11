@@ -259,6 +259,17 @@ Writes above the cap are rejected with an actionable error (split into narrower 
 
 `saga doctor` will surface a 7-day token-budget summary (avg/p99 injected, hook truncation count, `topic_read` average size). Backed by the existing `lembrança` log; landing in a future release.
 
+## Security model
+
+Saga is local-first and runs as your user. The short version of who it protects against, and who it does not:
+
+- **Protects.** Recall accidentally leaking across project layers · plaintext credentials drifting into topic bodies (`topic_write` runs a secret-pattern scanner) · sync of topics flagged `sensitivity: confidential` (never staged, never pushed) · common Go supply-chain issues (CI runs `gosec`, `govulncheck`, `gitleaks`, `golangci-lint`, CodeQL on every PR; releases are Cosign-keyless signed and ship a CycloneDX SBOM).
+- **Does not protect.** A compromised local user account · a compromised AI agent (whatever writes via `topic_write` is the authoriser) · disk theft without OS-level encryption (Saga does not encrypt at rest in v1 — that is on the v2 roadmap as opt-in) · compromise of the sync remote · prompt injection embedded in topic content · PII redaction beyond the credential scanner.
+
+Use **OS-level full-disk encryption** (FileVault / BitLocker / LUKS), keep your sync remote **private**, and mark anything truly sensitive `sensitivity: confidential` so it never leaves the machine.
+
+Full threat model, trust boundaries, and `sensitivity: confidential` semantics: [SECURITY.md](SECURITY.md).
+
 ## Configuration
 
 | Variable | Default | Meaning |
