@@ -19,6 +19,31 @@ Saga gives the agent a place to **write durable notes** after an investigation, 
 
 Think of it as **git for cognition**: notes are versioned by markdown, related by typed operators (`@supersedes`, `@refines`, `@conflicts_with`), surfaced by ranking that respects what the AI has actually used. The retrieval layer doesn't just *search* relevant memories — it tracks which ones are still canonical, which evolved, and which are superseded.
 
+### What happens on every prompt
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as You
+    participant CC as Claude Code
+    participant H as saga hook
+    participant DB as ~/.saga<br/>SQLite + markdown
+    participant AI as Claude
+
+    U->>CC: prompt
+    CC->>H: UserPromptSubmit
+    H->>DB: FTS5 + BM25 recall (relation-aware)
+    DB-->>H: top-K topics
+    H-->>CC: <saga-context> block
+    CC->>AI: prompt + injected memory
+    AI-->>U: response
+    AI->>CC: tool_use (e.g. topic_write)
+    CC->>DB: persist new topic
+    Note over DB: next session reads it back automatically
+```
+
+Every step is in code: the hook lives in `cmd/saga/cmd_hook.go`, recall and ranking in `internal/saga/service.go`, the MCP tool surface in `internal/mcp/`. The diagram above is the literal call path — not an abstract intention.
+
 ## Highlights
 
 - **Topic-grained, not chunk-grained.** ~500-word self-contained notes beat sentence-level chunking for code-investigation workloads.
@@ -326,6 +351,34 @@ saga/
 │   └── mcp/                   JSON-RPC 2.0 stdio server
 └── docs/                      design notes
 ```
+
+### Data flow
+
+```mermaid
+flowchart LR
+    subgraph disk[On disk]
+        MD[(markdown<br/>topics/*.md)]
+        IDX[(SQLite<br/>index.db)]
+    end
+    subgraph runtime[saga binary]
+        H[saga hook<br/>UserPromptSubmit]
+        M[saga mcp<br/>JSON-RPC 2.0 stdio]
+        CLI[saga lint / sync /<br/>doctor / show]
+    end
+    AI((AI agent))
+    CC((Claude Code /<br/>Cursor / Windsurf))
+
+    MD -. reindex .-> IDX
+    H  -- FTS5 + BM25 + relations --> IDX
+    M  -- topic_write atomic --> MD
+    M  -- recall --> IDX
+    AI <==>|MCP tools| M
+    CC -- spawns on every prompt --> H
+    CLI -- read --> IDX
+    CLI -- read --> MD
+```
+
+Markdown is the source of truth. The SQLite index is a regenerable cache — `rm ~/.saga/index.db && saga reindex` restores it from disk. The hook is fire-and-forget per prompt; the MCP server is the long-lived process the agent talks to.
 
 ## Saga Topic Spec
 

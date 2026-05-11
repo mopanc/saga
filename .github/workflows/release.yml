@@ -7,6 +7,10 @@ on:
 permissions:
   contents: write
   packages: write
+  # id-token: write is required for Cosign keyless signing via the OIDC
+  # ambient identity of this runner. Without it, `cosign sign-blob` fails
+  # to fetch a Fulcio certificate.
+  id-token: write
 
 jobs:
   goreleaser:
@@ -21,6 +25,12 @@ jobs:
         with:
           go-version: "1.25.x"
           cache: true
+
+      - name: Install syft (SBOM generator)
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Install cosign (release signing)
+        uses: sigstore/cosign-installer@v3
 
       - name: Run goreleaser
         uses: goreleaser/goreleaser-action@v7
