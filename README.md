@@ -196,6 +196,7 @@ On conflict, `saga sync` stops with clear instructions: resolve manually, `git r
 | `saga conflicts` | List unresolved `@conflicts_with` topic pairs in active layers |
 | `saga show` | Display a topic plus its incoming and outgoing relations |
 | `saga capabilities` | Print engine capability declaration (spec version, conformance level, types, operators) |
+| `saga lint` | Validate topics against [Saga Topic Spec v1.0](docs/spec/saga-topic-v1.md) — required fields, trait enums, slug ↔ title coherence, relation target resolution, supersedes / derived_from cycles, duplicate ids (`--scope`, `--fix`, `--format json`) |
 | `saga doctor` | Diagnose installation, configuration, content, and sync state |
 | `saga mcp` | Run as MCP stdio server (invoked by AI clients, not directly) |
 | `saga hook` | `UserPromptSubmit` hook for Claude Code (reads event JSON from stdin) |

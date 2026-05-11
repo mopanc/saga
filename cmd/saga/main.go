@@ -26,6 +26,7 @@ Commands:
   conflicts        List @conflicts_with topic pairs in active layers
   show             Display a topic plus its incoming and outgoing relations
   capabilities     Print engine capability declaration (spec/types/operators)
+  lint             Validate topics against Saga Topic Spec v1.0
   doctor           Diagnose installation, config, and content state
   mcp              Run MCP stdio server (invoked by AI clients)
   hook             Run UserPromptSubmit hook (invoked by Claude Code)
@@ -65,6 +66,8 @@ func main() {
 		err = runShow(args)
 	case "capabilities":
 		err = runCapabilities(args)
+	case "lint":
+		err = runLint(args)
 	case "doctor":
 		err = runDoctor(args)
 	case "mcp":
