@@ -3,6 +3,8 @@ package saga
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -233,6 +235,168 @@ func TestSyncStatusPreservesFilenamesWithLeadingPorcelainSpace(t *testing.T) {
 	}
 	if rep.UncommittedFiles[0] != "README.md" {
 		t.Errorf("UncommittedFiles[0] = %q, want %q", rep.UncommittedFiles[0], "README.md")
+	}
+}
+
+// writeTopic creates a minimal-but-valid topic file in <workDir>/topics/<name>.md
+// with the given sensitivity. id is derived from name so callers can assert it.
+func writeTopic(t *testing.T, workDir, name, sensitivity string) string {
+	t.Helper()
+	topicsDir := filepath.Join(workDir, "topics")
+	if err := os.MkdirAll(topicsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	id := "01J" + strings.ToUpper(name) + "ZZZ"
+	body := fmt.Sprintf(`---
+id: %s
+scope: personal
+type: topic
+title: %s
+sensitivity: %s
+confidence: proposed
+created_at: 2026-01-01T00:00:00Z
+updated_at: 2026-01-01T00:00:00Z
+---
+
+body of %s
+`, id, name, sensitivity, name)
+	path := filepath.Join(topicsDir, name+".md")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// writeMeta drops a minimal meta.yml so loadLayer recognises the dir.
+func writeMeta(t *testing.T, workDir string) {
+	t.Helper()
+	meta := []byte("scope: personal\ndisplay_name: test\nnotes_dir: topics/\n")
+	if err := os.WriteFile(filepath.Join(workDir, "meta.yml"), meta, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSyncExcludesConfidentialTopicsFromPush(t *testing.T) {
+	skipIfNoGit(t)
+	bare, work := setupSyncRepo(t)
+	writeMeta(t, work)
+	writeTopic(t, work, "public", "internal")
+	writeTopic(t, work, "secret", "confidential")
+
+	res, err := Sync(context.Background(), work, SyncOptions{})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if !res.Committed || !res.Pushed {
+		t.Fatalf("expected Committed && Pushed, got %+v", res)
+	}
+	if len(res.ExcludedConfidential) != 1 {
+		t.Fatalf("ExcludedConfidential len=%d, want 1: %+v", len(res.ExcludedConfidential), res.ExcludedConfidential)
+	}
+	if got := res.ExcludedConfidential[0].FilePath; got != "topics/secret.md" {
+		t.Errorf("ExcludedConfidential path = %q, want %q", got, "topics/secret.md")
+	}
+
+	// Verify on the remote: secret.md must NOT exist; public.md must.
+	other := t.TempDir()
+	mustRun(t, "", "git", "clone", bare, other)
+	if _, err := os.Stat(filepath.Join(other, "topics", "public.md")); err != nil {
+		t.Errorf("expected public.md in remote clone, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(other, "topics", "secret.md")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("expected secret.md NOT in remote clone, stat err = %v", err)
+	}
+}
+
+func TestSyncConfidentialFileStaysLocal(t *testing.T) {
+	skipIfNoGit(t)
+	_, work := setupSyncRepo(t)
+	writeMeta(t, work)
+	writeTopic(t, work, "secret", "confidential")
+
+	if _, err := Sync(context.Background(), work, SyncOptions{}); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(work, "topics", "secret.md")); err != nil {
+		t.Errorf("confidential file must remain on disk; stat err = %v", err)
+	}
+}
+
+func TestSyncDryRunListsPendingAndExcluded(t *testing.T) {
+	skipIfNoGit(t)
+	bare, work := setupSyncRepo(t)
+	writeMeta(t, work)
+	writeTopic(t, work, "public", "internal")
+	writeTopic(t, work, "secret", "confidential")
+
+	res, err := Sync(context.Background(), work, SyncOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("Sync dry-run: %v", err)
+	}
+	if res.Committed || res.Pulled || res.Pushed {
+		t.Errorf("dry-run must not mutate: %+v", res)
+	}
+	if len(res.ExcludedConfidential) != 1 {
+		t.Errorf("ExcludedConfidential len=%d, want 1", len(res.ExcludedConfidential))
+	}
+	wantAdds := map[string]bool{"meta.yml": true, "topics/public.md": true}
+	for _, p := range res.PendingAdds {
+		delete(wantAdds, p)
+	}
+	if len(wantAdds) != 0 {
+		t.Errorf("PendingAdds missing entries %v; got %v", wantAdds, res.PendingAdds)
+	}
+	for _, p := range res.PendingAdds {
+		if p == "topics/secret.md" {
+			t.Errorf("PendingAdds must not include confidential topic; got %v", res.PendingAdds)
+		}
+	}
+
+	// Confirm nothing was actually pushed.
+	other := t.TempDir()
+	mustRun(t, "", "git", "clone", bare, other)
+	if _, err := os.Stat(filepath.Join(other, "topics", "public.md")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("dry-run must not push: public.md should NOT exist in remote, stat err = %v", err)
+	}
+}
+
+func TestSyncWarnsWhenConfidentialAlreadyInRemote(t *testing.T) {
+	skipIfNoGit(t)
+	_, work := setupSyncRepo(t)
+	writeMeta(t, work)
+	// Write as internal first, push it.
+	writeTopic(t, work, "regret", "internal")
+	if _, err := Sync(context.Background(), work, SyncOptions{}); err != nil {
+		t.Fatalf("first Sync: %v", err)
+	}
+	// Flip to confidential and sync again.
+	writeTopic(t, work, "regret", "confidential")
+	res, err := Sync(context.Background(), work, SyncOptions{})
+	if err != nil {
+		t.Fatalf("second Sync: %v", err)
+	}
+	if len(res.AlreadyPushedWarnings) != 1 {
+		t.Fatalf("AlreadyPushedWarnings len=%d, want 1: %+v", len(res.AlreadyPushedWarnings), res.AlreadyPushedWarnings)
+	}
+	if got := res.AlreadyPushedWarnings[0].FilePath; got != "topics/regret.md" {
+		t.Errorf("AlreadyPushedWarnings path = %q, want %q", got, "topics/regret.md")
+	}
+}
+
+func TestSyncNoWarningWhenConfidentialNeverPushed(t *testing.T) {
+	skipIfNoGit(t)
+	_, work := setupSyncRepo(t)
+	writeMeta(t, work)
+	writeTopic(t, work, "secret", "confidential")
+	res, err := Sync(context.Background(), work, SyncOptions{})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(res.AlreadyPushedWarnings) != 0 {
+		t.Errorf("AlreadyPushedWarnings must be empty for never-pushed confidential, got %+v", res.AlreadyPushedWarnings)
+	}
+	if len(res.ExcludedConfidential) != 1 {
+		t.Errorf("ExcludedConfidential must still report exclusion, got %+v", res.ExcludedConfidential)
 	}
 }
 

@@ -19,7 +19,11 @@ Usage:
   saga sync --pull             only pull (skips auto-commit)
   saga sync --push             only push (auto-commits, no pull)
   saga sync --status           show local vs remote state without changing anything
+  saga sync --dry-run          show what would be pushed and what is excluded, no mutation
   saga sync --no-auto-commit   skip auto-commit (require manual commit before push)
+
+Topics with frontmatter sensitivity: confidential are never pushed — they stay
+local-only on disk. Use --dry-run to preview the plan first.
 
 Sync uses the git remote configured at ~/.saga/personal/.git. To bootstrap:
   cd ~/.saga/personal
@@ -35,6 +39,7 @@ func runSync(args []string) error {
 	pullOnly := fs.Bool("pull", false, "only pull (skip push)")
 	pushOnly := fs.Bool("push", false, "only push (skip pull)")
 	statusOnly := fs.Bool("status", false, "show status without applying changes")
+	dryRun := fs.Bool("dry-run", false, "show what would be pushed and what is excluded, without mutating")
 	noAutoCommit := fs.Bool("no-auto-commit", false, "skip auto-commit of pending changes")
 	commitMsg := fs.String("message", "", "auto-commit message override (default: \"saga: sync <RFC3339>\")")
 	if err := fs.Parse(args); err != nil {
@@ -42,6 +47,9 @@ func runSync(args []string) error {
 	}
 	if *pullOnly && *pushOnly {
 		return errors.New("--pull and --push are mutually exclusive")
+	}
+	if *dryRun && *statusOnly {
+		return errors.New("--dry-run and --status are mutually exclusive")
 	}
 
 	cfg, err := saga.LoadConfig()
@@ -61,6 +69,7 @@ func runSync(args []string) error {
 		PullOnly:     *pullOnly,
 		PushOnly:     *pushOnly,
 		NoAutoCommit: *noAutoCommit,
+		DryRun:       *dryRun,
 		CommitMsg:    *commitMsg,
 	})
 	if err != nil {
@@ -80,6 +89,11 @@ func runSync(args []string) error {
 			return err
 		}
 		return err
+	}
+
+	if *dryRun {
+		printSyncDryRun(res)
+		return nil
 	}
 
 	printSyncResult(res)
@@ -119,6 +133,45 @@ func printSyncResult(r *saga.SyncResult) {
 			fmt.Println("  ✓ pushed — nothing new")
 		}
 	}
+	if n := len(r.ExcludedConfidential); n > 0 {
+		fmt.Printf("  · %d confidential topic(s) kept local-only\n", n)
+	}
+	printAlreadyPushedWarnings(r)
+}
+
+func printAlreadyPushedWarnings(r *saga.SyncResult) {
+	if len(r.AlreadyPushedWarnings) == 0 {
+		return
+	}
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "warning: confidential topic(s) already exist in the remote — marking confidential locally")
+	fmt.Fprintln(os.Stderr, "does NOT retroactively remove them. Each was published in an earlier sync:")
+	for _, w := range r.AlreadyPushedWarnings {
+		fmt.Fprintf(os.Stderr, "  %s  (%s)\n", w.FilePath, w.ID)
+	}
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "To force-remove from the remote, use git directly until `saga sync --purge` lands:")
+	fmt.Fprintln(os.Stderr, "  cd "+r.LayerDir)
+	fmt.Fprintln(os.Stderr, "  git rm --cached <path> && git commit -m 'remove confidential' && git push")
+}
+
+func printSyncDryRun(r *saga.SyncResult) {
+	fmt.Printf("saga sync --dry-run: branch=%s remote=%s\n", r.Branch, r.Remote)
+	if len(r.PendingAdds) == 0 {
+		fmt.Println("  · would push: nothing — working tree matches index")
+	} else {
+		fmt.Printf("  would push %d change(s):\n", len(r.PendingAdds))
+		for _, p := range r.PendingAdds {
+			fmt.Printf("    + %s\n", p)
+		}
+	}
+	if n := len(r.ExcludedConfidential); n > 0 {
+		fmt.Printf("  would exclude %d confidential topic(s) (sensitivity: confidential):\n", n)
+		for _, e := range r.ExcludedConfidential {
+			fmt.Printf("    - %s  (%s)\n", e.FilePath, e.ID)
+		}
+	}
+	printAlreadyPushedWarnings(r)
 }
 
 func printSyncStatus(ctx context.Context, layerDir string) error {

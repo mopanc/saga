@@ -73,7 +73,7 @@ func (r *Resolver) loadOrInitPersonal() (Layer, error) {
 		}
 		seed := []byte(`scope: personal
 display_name: Personal layer
-sensitivity_default: confidential
+sensitivity_default: internal
 write_policy: direct
 notes_dir: topics/
 `)
