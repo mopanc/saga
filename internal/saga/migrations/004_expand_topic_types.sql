@@ -7,11 +7,12 @@
 -- topic-style retrieval). Reference: internal/saga/capabilities.go.
 --
 -- SQLite does not support ALTER COLUMN / DROP CONSTRAINT, so we rebuild the
--- table. PRAGMA defer_foreign_keys = 1 is required because topic_reference
--- and topic_relation declare FOREIGN KEY (topic_id|source_id) REFERENCES
--- topic_index(id); without the deferral, DROP TABLE topic_index would fail.
-
-PRAGMA defer_foreign_keys = 1;
+-- table: create-new, copy, DROP old, rename. The DROP would fire ON DELETE
+-- CASCADE on the child tables (lembranca, topic_reference, topic_relation) and
+-- wipe them. defer_foreign_keys does NOT prevent this — it only defers checking,
+-- not the cascade action. The migration runner (applyMigration in db.go) instead
+-- runs this file with PRAGMA foreign_keys=OFF on the connection, then verifies
+-- integrity with foreign_key_check. No per-file pragma is needed or wanted here.
 
 CREATE TABLE topic_index_new (
   id           TEXT PRIMARY KEY,

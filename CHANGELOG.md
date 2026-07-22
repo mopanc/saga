@@ -10,6 +10,30 @@ goreleaser-generated commit-level changelog and signed checksums.
 
 ## [Unreleased]
 
+### Security
+- Bumped `golang.org/x/text` 0.37.0 → 0.39.0 to resolve GO-2026-5970
+  (infinite loop on invalid input), which `saga.Slugify` reaches through
+  `transform.String`.
+
+### Fixed
+- **Critical data loss: `lembranca` history was wiped on upgrade and on
+  reindex.** Two independent bugs destroyed the episodic usage history
+  (39k+ rows in the field), both via `ON DELETE CASCADE` from
+  `lembranca.topic_id`:
+  - The migration runner rebuilt `topic_index` (migrations 003/004) inside a
+    transaction with foreign keys enabled. `DROP TABLE topic_index` cascaded
+    and emptied `lembranca`. `PRAGMA defer_foreign_keys` does not help — it
+    defers constraint *checking*, not cascade *actions*. The runner now
+    applies each migration on a pinned connection with `PRAGMA
+    foreign_keys=OFF` (which cannot be toggled inside a transaction), then
+    verifies integrity with `PRAGMA foreign_key_check`.
+  - `saga reindex` wiped-and-rebuilt each layer (`DELETE FROM topic_index
+    WHERE source_layer`), cascading away history on every run. `IndexLayer`
+    now upserts topics by id and prunes only rows whose note file is gone, so
+    surviving topics keep their history.
+  - Regression tests seed a beta.3 DB, apply the rebuild migrations, reindex,
+    and assert `lembranca` and `foreign_key_check` survive intact.
+
 ### Added
 - CycloneDX SBOM (one per archive) and Cosign keyless signature of the
   `checksums.txt` manifest are now generated and published on every tagged

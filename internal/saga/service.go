@@ -800,7 +800,7 @@ func (s *Service) TopicWrite(args TopicWriteArgs) (*TopicWriteResult, error) {
 	if err := writeFileAtomic(fpath, rendered, 0o600); err != nil {
 		return nil, fmt.Errorf("write: %w", err)
 	}
-	if err := s.db.indexFile(fpath, *target); err != nil {
+	if _, err := s.db.indexFile(fpath, *target); err != nil {
 		return nil, fmt.Errorf("reindex: %w", err)
 	}
 	return &TopicWriteResult{
