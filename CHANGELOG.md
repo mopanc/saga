@@ -10,6 +10,11 @@ goreleaser-generated commit-level changelog and signed checksums.
 
 ## [Unreleased]
 
+### Security
+- Bumped `golang.org/x/text` 0.37.0 → 0.39.0 to resolve GO-2026-5970
+  (infinite loop on invalid input), which `saga.Slugify` reaches through
+  `transform.String`.
+
 ### Fixed
 - **Critical data loss: `lembranca` history was wiped on upgrade and on
   reindex.** Two independent bugs destroyed the episodic usage history
