@@ -4,10 +4,12 @@
 -- (the topic note in topic_index) is durable; the "lembrança" is the event
 -- of using it. Distinction matters: same memory can have many lembranças.
 --
--- Known limitation: ON DELETE CASCADE means a `saga reindex` (which currently
--- DELETEs and re-INSERTs topic_index rows for a layer) loses lembrança
--- history for affected topics. Acceptable for Phase 1 (reindex is rare and
--- manual). Iter 4+ may refactor indexer to UPSERT-only, preserving history.
+-- ON DELETE CASCADE: deleting a topic removes its lembrança history. The
+-- indexer (IndexLayer) is therefore careful to UPSERT topics by id and only
+-- prune rows whose note file is gone — it no longer wipes-and-rebuilds the
+-- layer, which used to destroy history on every `saga reindex`. Whether usage
+-- history should outlive the deletion of its note (ON DELETE SET NULL) remains
+-- an open design decision.
 
 CREATE TABLE lembranca (
   id           TEXT PRIMARY KEY,                       -- ULID
