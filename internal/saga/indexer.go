@@ -25,20 +25,34 @@ type IndexError struct {
 	Err  error
 }
 
-// IndexLayer rebuilds a layer's index entries from its notes directory. It
-// upserts every note found (by id), then prunes only the index rows whose .md
-// file no longer exists on disk. Files that fail to parse are recorded in
-// Errors but don't abort the walk — partial indexing is preferred over an
-// empty index.
+type parsedNote struct {
+	path    string
+	content []byte
+	topic   *Topic
+}
+
+// IndexLayer rebuilds a layer's index entries from its notes directory in three
+// phases: parse every note (no writes), prune index rows whose id is no longer
+// on disk, then persist (upsert) the parsed notes. Files that fail to parse are
+// recorded in Errors but don't abort the run.
 //
-// Note the ordering: we deliberately do NOT wipe the layer before indexing.
-// The old wipe (DELETE FROM topic_index WHERE source_layer) fired ON DELETE
-// CASCADE and destroyed the lembrança usage history of every topic on every
-// reindex. Upserting first keeps the row (and its id) for topics that still
-// exist, so their history survives; only genuinely-removed topics are pruned.
+// Two ordering decisions matter:
+//
+//   - We do NOT wipe the layer up front. The old wipe (DELETE FROM topic_index
+//     WHERE source_layer) fired ON DELETE CASCADE and destroyed the lembrança
+//     usage history of every topic on every reindex. Upserting by id keeps the
+//     row (and its history) for topics that still exist.
+//
+//   - We prune BEFORE persisting, not after. A note that keeps its title but
+//     changes id (a reorg shuffle) would otherwise collide with its own stale
+//     row on UNIQUE(scope,title) during insert — and that row would then be
+//     pruned, making the note vanish. Pruning first frees the title. Genuine
+//     duplicates (two files sharing scope+title) still surface as a per-file
+//     UNIQUE error, which is correct.
 func (db *DB) IndexLayer(layer Layer) (*IndexResult, error) {
 	result := &IndexResult{LayerScope: layer.Scope}
 
+	var notes []parsedNote
 	seen := make(map[string]struct{})
 
 	if _, err := os.Stat(layer.NotesDir); !errors.Is(err, fs.ErrNotExist) {
@@ -46,20 +60,17 @@ func (db *DB) IndexLayer(layer Layer) (*IndexResult, error) {
 			if err != nil {
 				return err
 			}
-			if d.IsDir() {
+			if d.IsDir() || !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
 				return nil
 			}
-			if !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
-				return nil
-			}
-			id, err := db.indexFile(path, layer)
+			topic, content, err := db.parseFile(path, layer)
 			if err != nil {
 				result.Failed++
 				result.Errors = append(result.Errors, IndexError{File: path, Err: err})
 				return nil
 			}
-			seen[id] = struct{}{}
-			result.Indexed++
+			notes = append(notes, parsedNote{path: path, content: content, topic: topic})
+			seen[topic.ID] = struct{}{}
 			return nil
 		})
 		if walkErr != nil {
@@ -69,6 +80,15 @@ func (db *DB) IndexLayer(layer Layer) (*IndexResult, error) {
 
 	if err := db.pruneUnseenTopics(layer.Scope, seen); err != nil {
 		return result, err
+	}
+
+	for _, n := range notes {
+		if err := db.persistTopic(n.topic, n.content, n.path, layer.Scope); err != nil {
+			result.Failed++
+			result.Errors = append(result.Errors, IndexError{File: n.path, Err: err})
+			continue
+		}
+		result.Indexed++
 	}
 	return result, nil
 }
@@ -111,34 +131,38 @@ func (db *DB) pruneUnseenTopics(scope string, seen map[string]struct{}) error {
 	return nil
 }
 
-// indexFile parses a single .md file and upserts it into the index. It returns
-// the topic id on success so callers (IndexLayer) can track which topics were
-// seen this pass. Used both by IndexLayer (bulk) and TopicWrite (single).
-func (db *DB) indexFile(path string, layer Layer) (string, error) {
+// parseFile reads and parses a single .md file, validating that its declared
+// scope matches the layer. It performs no database writes.
+func (db *DB) parseFile(path string, layer Layer) (*Topic, []byte, error) {
 	content, err := os.ReadFile(path) // #nosec G304 -- path is from filepath.WalkDir over the layer's NotesDir
 	if err != nil {
-		return "", fmt.Errorf("read: %w", err)
+		return nil, nil, fmt.Errorf("read: %w", err)
 	}
 	topic, err := ParseTopic(content)
 	if err != nil {
-		return "", fmt.Errorf("parse: %w", err)
+		return nil, nil, fmt.Errorf("parse: %w", err)
 	}
-
 	// Defend against scope drift: the file's frontmatter scope must match
 	// the layer it lives in. Otherwise the index lies about provenance.
 	if topic.Scope != layer.Scope {
-		return "", fmt.Errorf("scope mismatch: file declares %q, layer is %q", topic.Scope, layer.Scope)
+		return nil, nil, fmt.Errorf("scope mismatch: file declares %q, layer is %q", topic.Scope, layer.Scope)
 	}
+	return topic, content, nil
+}
 
+// persistTopic upserts one parsed topic — plus its FTS row, references and
+// relations — into the index in a single transaction. layerScope is stored as
+// source_layer.
+func (db *DB) persistTopic(topic *Topic, content []byte, path, layerScope string) error {
 	hash := sha256Hex(content)
 	synJSON, err := json.Marshal(topic.Synonyms)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	tx, err := db.Begin()
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	if _, err := tx.Exec(
@@ -162,30 +186,30 @@ func (db *DB) indexFile(path string, layer Layer) (string, error) {
 		topic.ID, topic.Scope, topic.Type, topic.Title, string(synJSON),
 		nonEmpty(topic.Sensitivity, "internal"),
 		nonEmpty(topic.Confidence, "proposed"),
-		path, hash, layer.Scope,
+		path, hash, layerScope,
 		topic.CreatedAt.UnixMilli(), topic.UpdatedAt.UnixMilli(),
 	); err != nil {
 		_ = tx.Rollback()
-		return "", fmt.Errorf("upsert topic_index: %w", err)
+		return fmt.Errorf("upsert topic_index: %w", err)
 	}
 
 	// FTS5 has no upsert; delete then insert.
 	if _, err := tx.Exec("DELETE FROM topic_fts WHERE id = ?", topic.ID); err != nil {
 		_ = tx.Rollback()
-		return "", err
+		return err
 	}
 	if _, err := tx.Exec(`
 		INSERT INTO topic_fts (id, scope, title, synonyms, body)
 		VALUES (?, ?, ?, ?, ?)
 	`, topic.ID, topic.Scope, topic.Title, strings.Join(topic.Synonyms, " "), topic.Body); err != nil {
 		_ = tx.Rollback()
-		return "", fmt.Errorf("insert topic_fts: %w", err)
+		return fmt.Errorf("insert topic_fts: %w", err)
 	}
 
 	// Replace references (cascade-deleted if topic existed; here we re-insert).
 	if _, err := tx.Exec("DELETE FROM topic_reference WHERE topic_id = ?", topic.ID); err != nil {
 		_ = tx.Rollback()
-		return "", err
+		return err
 	}
 	for _, ref := range topic.References {
 		if _, err := tx.Exec(`
@@ -193,14 +217,14 @@ func (db *DB) indexFile(path string, layer Layer) (string, error) {
 			VALUES (?, ?, ?, ?, 0)
 		`, topic.ID, ref.Path, ref.Lines, ref.BlameHash); err != nil {
 			_ = tx.Rollback()
-			return "", fmt.Errorf("insert topic_reference: %w", err)
+			return fmt.Errorf("insert topic_reference: %w", err)
 		}
 	}
 
 	// Replace relations. Same upsert-by-replace pattern as references.
 	if _, err := tx.Exec("DELETE FROM topic_relation WHERE source_id = ?", topic.ID); err != nil {
 		_ = tx.Rollback()
-		return "", err
+		return err
 	}
 	for _, rel := range topic.Relations {
 		if _, err := tx.Exec(`
@@ -209,11 +233,23 @@ func (db *DB) indexFile(path string, layer Layer) (string, error) {
 			ON CONFLICT(source_id, op, target_id) DO UPDATE SET note = excluded.note
 		`, topic.ID, rel.Op, rel.Target, nullableString(rel.Note)); err != nil {
 			_ = tx.Rollback()
-			return "", fmt.Errorf("insert topic_relation: %w", err)
+			return fmt.Errorf("insert topic_relation: %w", err)
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
+	return tx.Commit()
+}
+
+// indexFile parses and persists a single .md file, returning the topic id. Used
+// by TopicWrite (single write after each edit). IndexLayer instead calls
+// parseFile and persistTopic directly so it can prune stale rows between the
+// two phases.
+func (db *DB) indexFile(path string, layer Layer) (string, error) {
+	topic, content, err := db.parseFile(path, layer)
+	if err != nil {
+		return "", err
+	}
+	if err := db.persistTopic(topic, content, path, layer.Scope); err != nil {
 		return "", err
 	}
 	return topic.ID, nil
