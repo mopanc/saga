@@ -148,6 +148,88 @@ func TestIndexLayer_preservesLembrancaOnReindex(t *testing.T) {
 	assertNoFKViolations(t, db)
 }
 
+// noteWithID renders a minimal valid topic file with a given id and title.
+func noteWithID(id, title string) string {
+	return "---\nid: " + id + "\nscope: project:demo\ntype: topic\ntitle: " + title + "\n" +
+		"created_at: 2026-04-12T10:30:00Z\nupdated_at: 2026-04-12T10:30:00Z\n---\n\nbody\n"
+}
+
+// TestIndexLayer_reindexSurvivesIdChangeSameTitle is the regression for the
+// rc.3 reindex bug: a note that keeps its title but changes id (a reorg
+// shuffle) must not collide with its own stale row and vanish. Pruning runs
+// before persisting, so the stale id is removed first and the note re-indexes
+// cleanly.
+func TestIndexLayer_reindexSurvivesIdChangeSameTitle(t *testing.T) {
+	db, err := OpenDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	layer := setupProjectLayer(t, "project:demo", map[string]string{
+		"a.md": noteWithID("01HXY5KZQVJ8M3R7ABCDEFGHIA", "Shared Title"),
+	})
+	if _, err := db.IndexLayer(layer); err != nil {
+		t.Fatalf("first index: %v", err)
+	}
+
+	// Reorg: same title, new id.
+	if err := os.WriteFile(filepath.Join(layer.NotesDir, "a.md"),
+		[]byte(noteWithID("01HXY5KZQVJ8M3R7ABCDEFGHIB", "Shared Title")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := db.IndexLayer(layer)
+	if err != nil {
+		t.Fatalf("reindex: %v", err)
+	}
+	if r.Failed != 0 {
+		t.Errorf("reindex failed=%d, want 0; errors: %+v", r.Failed, r.Errors)
+	}
+
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM topic_index WHERE source_layer='project:demo'").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("note vanished after id-change reindex: count=%d, want 1", count)
+	}
+	assertNoFKViolations(t, db)
+}
+
+// TestIndexLayer_duplicateTitleStillErrors locks in that two distinct files
+// sharing (scope, title) remain a per-file error — one survives, the other is
+// reported — rather than silently overwriting or vanishing both.
+func TestIndexLayer_duplicateTitleStillErrors(t *testing.T) {
+	db, err := OpenDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	layer := setupProjectLayer(t, "project:demo", map[string]string{
+		"a.md": noteWithID("01HXY5KZQVJ8M3R7ABCDEFGHIA", "Dup Title"),
+		"b.md": noteWithID("01HXY5KZQVJ8M3R7ABCDEFGHIB", "Dup Title"),
+	})
+
+	r, err := db.IndexLayer(layer)
+	if err != nil {
+		t.Fatalf("index: %v", err)
+	}
+	if r.Failed != 1 {
+		t.Errorf("duplicate title: failed=%d, want 1", r.Failed)
+	}
+
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM topic_index WHERE title='Dup Title'").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("duplicate title: %d rows survived, want exactly 1", count)
+	}
+	assertNoFKViolations(t, db)
+}
+
 // TestIndexLayer_prunesDeletedNotes documents that a note removed from disk is
 // pruned from the index on the next reindex (and cannot leave FK violations).
 func TestIndexLayer_prunesDeletedNotes(t *testing.T) {

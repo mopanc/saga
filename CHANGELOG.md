@@ -10,6 +10,19 @@ goreleaser-generated commit-level changelog and signed checksums.
 
 ## [Unreleased]
 
+### Fixed
+- **Reindex regression introduced in rc.3: a note that kept its title but
+  changed id vanished from the index.** The rc.3 reindex upserted by id and
+  pruned stale rows *after*, so a re-id'd note collided with its own stale row
+  on `UNIQUE(scope, title)`, failed to insert, and was then pruned — losing the
+  topic (the `.md` on disk was untouched). `IndexLayer` now runs in three
+  phases: parse all notes, **prune stale ids first**, then persist. The stale
+  row is gone before the insert, so the title is free. Genuine duplicates (two
+  files sharing scope+title) still surface as a per-file error, and one row
+  survives. Regression tests cover both.
+
+## [1.0.0-rc.3] — 2026-07-22
+
 ### Security
 - Bumped `golang.org/x/text` 0.37.0 → 0.39.0 to resolve GO-2026-5970
   (infinite loop on invalid input), which `saga.Slugify` reaches through
