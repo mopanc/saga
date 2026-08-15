@@ -336,3 +336,37 @@ func TestIndexLayer_emptyNotesDir(t *testing.T) {
 		t.Errorf("expected empty result, got %+v", result)
 	}
 }
+
+// TestPersistTopic_emptyListsAreArraysNotNull guards a silent-wrong-answer
+// defect: json.Marshal of a nil slice yields "null", so a note with no synonyms
+// and one with an empty list were stored differently. Any query of the obvious
+// form (`WHERE triggers != '[]'`) then reads as correct while matching every
+// note that simply has none.
+func TestPersistTopic_emptyListsAreArraysNotNull(t *testing.T) {
+	db, err := OpenDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	layer := setupProjectLayer(t, "project:demo", map[string]string{
+		"bare.md": noteWithID("01HXY5KZQVJ8M3R7ABCDEFGHIA", "No lists at all"),
+	})
+	if _, err := db.IndexLayer(layer); err != nil {
+		t.Fatal(err)
+	}
+
+	var synonyms, triggers string
+	if err := db.QueryRow(
+		"SELECT synonyms, triggers FROM topic_index WHERE id = ?",
+		"01HXY5KZQVJ8M3R7ABCDEFGHIA",
+	).Scan(&synonyms, &triggers); err != nil {
+		t.Fatal(err)
+	}
+	if synonyms != "[]" {
+		t.Errorf("synonyms stored as %q, want %q", synonyms, "[]")
+	}
+	if triggers != "[]" {
+		t.Errorf("triggers stored as %q, want %q", triggers, "[]")
+	}
+}
