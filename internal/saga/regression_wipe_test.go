@@ -263,3 +263,127 @@ func TestIndexLayer_prunesDeletedNotes(t *testing.T) {
 	}
 	assertNoFKViolations(t, db)
 }
+
+// noteInScope renders a minimal valid topic file for an arbitrary scope, so a
+// test can move the same id between layers the way a real reorg does.
+func noteInScope(id, scope, title string) string {
+	return "---\nid: " + id + "\nscope: " + scope + "\ntype: topic\ntitle: " + title + "\n" +
+		"created_at: 2026-04-12T10:30:00Z\nupdated_at: 2026-04-12T10:30:00Z\n---\n\nbody\n"
+}
+
+// TestIndexLayer_moveBetweenLayersPreservesLembranca is the regression for #95,
+// found by dogfooding: filing a personal note into a project layer (same id,
+// new scope) used to destroy its entire usage history. The source layer's
+// prune deleted the index row before the destination layer re-inserted it, and
+// ON DELETE CASCADE took the lembranças with it — 76 rows across 8 notes in the
+// field. Migration 005 removed that FK; this test locks the behaviour in.
+func TestIndexLayer_moveBetweenLayersPreservesLembranca(t *testing.T) {
+	db, err := OpenDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	const topicID = "01HXY5KZQVJ8M3R7ABCDEFGHIA"
+
+	personal := setupProjectLayer(t, "personal", map[string]string{
+		"npm-token-rotation.md": noteInScope(topicID, "personal", "NPM token rotation"),
+	})
+	if _, err := db.IndexLayer(personal); err != nil {
+		t.Fatalf("index personal: %v", err)
+	}
+
+	const want = 25
+	for i := 0; i < want; i++ {
+		if err := db.LogLembrancas([]string{topicID}, LembrancaKindRecall, "q", "/tmp"); err != nil {
+			t.Fatalf("log lembranca: %v", err)
+		}
+	}
+
+	// The reorg: same id and title, now filed under the project layer.
+	project := setupProjectLayer(t, "project:depguard", map[string]string{
+		"npm-token-rotation.md": noteInScope(topicID, "project:depguard", "NPM token rotation"),
+	})
+	if err := os.Remove(filepath.Join(personal.NotesDir, "npm-token-rotation.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reindex in the real order: source layer first, destination second.
+	if _, err := db.IndexLayer(personal); err != nil {
+		t.Fatalf("reindex personal after move: %v", err)
+	}
+	if _, err := db.IndexLayer(project); err != nil {
+		t.Fatalf("index project: %v", err)
+	}
+
+	var got int
+	if err := db.QueryRow("SELECT COUNT(*) FROM lembranca WHERE topic_id = ?", topicID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("cross-layer move destroyed lembrança history: got %d, want %d", got, want)
+	}
+
+	var layer string
+	if err := db.QueryRow("SELECT source_layer FROM topic_index WHERE id = ?", topicID).Scan(&layer); err != nil {
+		t.Fatal(err)
+	}
+	if layer != "project:depguard" {
+		t.Errorf("source_layer = %q, want project:depguard", layer)
+	}
+	assertNoFKViolations(t, db)
+}
+
+// TestPruneOrphanedLembrancas covers the other half of migration 005: history
+// of a genuinely deleted note is retained (not cascaded away) and is reclaimable
+// by `saga gc`, which only ever deletes ids it is handed explicitly.
+func TestPruneOrphanedLembrancas(t *testing.T) {
+	db, err := OpenDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	const topicID = "01HXY5KZQVJ8M3R7ABCDEFGHIA"
+	layer := setupProjectLayer(t, "project:demo", map[string]string{
+		"a.md": noteInScope(topicID, "project:demo", "Doomed"),
+	})
+	if _, err := db.IndexLayer(layer); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := db.LogLembrancas([]string{topicID}, LembrancaKindRecall, "q", "/tmp"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := os.Remove(filepath.Join(layer.NotesDir, "a.md")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.IndexLayer(layer); err != nil {
+		t.Fatalf("reindex after delete: %v", err)
+	}
+
+	// History outlives the note rather than being cascaded away.
+	orphans, err := db.OrphanedLembrancas()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(orphans) != 1 || orphans[0].TopicID != topicID || orphans[0].Count != 3 {
+		t.Fatalf("orphans = %+v, want 1 group of 3 for %s", orphans, topicID)
+	}
+
+	// gc never guesses: an id it was not given is left alone.
+	if n, err := db.PruneOrphanedLembrancas([]string{"01HXY5KZQVJ8M3R7ABCDEFGHIZ"}); err != nil || n != 0 {
+		t.Fatalf("prune of unrelated id: n=%d err=%v, want 0/nil", n, err)
+	}
+
+	n, err := db.PruneOrphanedLembrancas([]string{topicID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 {
+		t.Errorf("pruned %d, want 3", n)
+	}
+	assertNoFKViolations(t, db)
+}

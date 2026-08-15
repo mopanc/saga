@@ -41,7 +41,9 @@ type parsedNote struct {
 //   - We do NOT wipe the layer up front. The old wipe (DELETE FROM topic_index
 //     WHERE source_layer) fired ON DELETE CASCADE and destroyed the lembrança
 //     usage history of every topic on every reindex. Upserting by id keeps the
-//     row (and its history) for topics that still exist.
+//     row for topics that still exist. Since migration 005 lembrança no longer
+//     hangs off that FK at all, so history survives the prune too — but the
+//     upsert is still what keeps a reindex from churning every row.
 //
 //   - We prune BEFORE persisting, not after. A note that keeps its title but
 //     changes id (a reorg shuffle) would otherwise collide with its own stale
@@ -94,11 +96,16 @@ func (db *DB) IndexLayer(layer Layer) (*IndexResult, error) {
 }
 
 // pruneUnseenTopics removes index rows for a layer whose topic id was not seen
-// during the current indexing pass — i.e. notes deleted from disk. Removing a
-// topic cascades to its topic_reference, topic_relation and lembranca rows
-// (the note is genuinely gone); topic_fts has no cascade, so it is cleared
-// explicitly. Whether usage history should outlive its note is a separate
-// design decision (see the ON DELETE CASCADE on lembranca.topic_id).
+// during the current indexing pass — i.e. notes deleted from disk, or moved to
+// another layer. Removing a topic cascades to its topic_reference and
+// topic_relation rows (both derived from the note, rebuilt on next index);
+// topic_fts has no cascade, so it is cleared explicitly.
+//
+// It does NOT touch lembranca. Since migration 005 that table has no FK to
+// topic_index, precisely because this prune cannot tell "note deleted" from
+// "note moved to another layer" — the two look identical from inside one
+// layer's pass, and cascading destroyed the history of every moved note (#95).
+// Orphaned lembranças are retained as history and reclaimed by `saga gc`.
 func (db *DB) pruneUnseenTopics(scope string, seen map[string]struct{}) error {
 	rows, err := db.Query("SELECT id FROM topic_index WHERE source_layer = ?", scope)
 	if err != nil {
