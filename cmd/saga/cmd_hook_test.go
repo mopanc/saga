@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/mopanc/saga/internal/saga"
 )
@@ -119,4 +120,63 @@ func TestEmitLensBlock_emptyResultsSkipsContextBlock(t *testing.T) {
 	if !strings.Contains(buf.String(), "<saga-meta>") {
 		t.Fatalf("expected <saga-meta> always, got %q", buf.String())
 	}
+}
+
+// TestCapHookOutput_closesTruncatedSections is the regression for the field
+// report: a cut through <saga-context> emitted an opening tag with no closer,
+// handing the client malformed markup on every capped prompt.
+func TestCapHookOutput_closesTruncatedSections(t *testing.T) {
+	var buf bytes.Buffer
+	buf.WriteString("<saga-meta>\nmeta\n</saga-meta>\n")
+	buf.WriteString("<saga-context>\n")
+	for i := 0; i < 500; i++ {
+		buf.WriteString("a line of topic body that will be cut somewhere in here\n")
+	}
+	buf.WriteString("</saga-context>\n")
+
+	const cap = 2048
+	got := string(capHookOutput(buf.Bytes(), cap))
+
+	if strings.Count(got, "<saga-context>") != strings.Count(got, "</saga-context>") {
+		t.Errorf("<saga-context> left unclosed after truncation:\n%q", tail(got, 200))
+	}
+	if strings.Count(got, "<saga-meta>") != strings.Count(got, "</saga-meta>") {
+		t.Error("<saga-meta> left unclosed after truncation")
+	}
+	if !strings.Contains(got, "capped at") {
+		t.Error("truncation must be announced, not silent")
+	}
+	// The cap is a promise about the output, not about the part before the
+	// notice: the field report measured 8250 bytes against an announced 8192.
+	if len(got) > cap {
+		t.Errorf("output overran the cap it announces: %d > %d", len(got), cap)
+	}
+}
+
+func TestCapHookOutput_untouchedBelowCap(t *testing.T) {
+	in := []byte("<saga-meta>\nsmall\n</saga-meta>\n")
+	if got := capHookOutput(in, 8192); string(got) != string(in) {
+		t.Errorf("output below the cap was modified: %q", got)
+	}
+}
+
+func TestCapHookOutput_producesValidUTF8(t *testing.T) {
+	var buf bytes.Buffer
+	buf.WriteString("<saga-context>\n")
+	buf.WriteString(strings.Repeat("configuração e comunicação ", 200))
+	buf.WriteString("\n</saga-context>\n")
+
+	for cap := 200; cap < 1200; cap += 13 {
+		got := capHookOutput(buf.Bytes(), cap)
+		if !utf8.Valid(got) {
+			t.Fatalf("cap=%d produced invalid UTF-8", cap)
+		}
+	}
+}
+
+func tail(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
 }

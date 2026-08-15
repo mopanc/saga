@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"unicode/utf8"
 )
 
 // DefaultBaselineMaxTokens caps the size of the always-on identity block
@@ -162,10 +163,18 @@ func truncateAtBoundary(text string, maxChars int) string {
 		return text
 	}
 	cut := text[:maxChars]
-	if idx := strings.LastIndex(cut, "\n\n"); idx > 0 {
+	switch idx := strings.LastIndex(cut, "\n\n"); {
+	case idx > 0:
 		cut = text[:idx]
-	} else if idx := strings.LastIndex(cut, "\n"); idx > 0 {
-		cut = text[:idx]
+	default:
+		if idx := strings.LastIndex(cut, "\n"); idx > 0 {
+			cut = text[:idx]
+		} else {
+			// No newline to cut at, so the budget lands mid-line. maxChars is a
+			// byte count, and slicing bytes splits multi-byte runes: a "ç"
+			// (\xc3\xa7) becomes a lone \xc3 and the hook emits invalid UTF-8.
+			cut = TrimToRuneBoundary(cut)
+		}
 	}
 	return strings.TrimRight(cut, "\n") + "\n[…]"
 }
@@ -221,4 +230,17 @@ func (s *Service) notesByScopeAndType(scope string, types []string) ([]*Topic, e
 		topics = append(topics, topic)
 	}
 	return topics, rows.Err()
+}
+
+// TrimToRuneBoundary drops any partial rune left at the end of a byte slice cut.
+// Returns s unchanged when it already ends on a boundary.
+func TrimToRuneBoundary(s string) string {
+	for len(s) > 0 {
+		r, size := utf8.DecodeLastRuneInString(s)
+		if r != utf8.RuneError || size > 1 {
+			return s
+		}
+		s = s[:len(s)-1]
+	}
+	return s
 }

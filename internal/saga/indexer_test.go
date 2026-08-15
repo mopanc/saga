@@ -370,3 +370,44 @@ func TestPersistTopic_emptyListsAreArraysNotNull(t *testing.T) {
 		t.Errorf("triggers stored as %q, want %q", triggers, "[]")
 	}
 }
+
+// TestIndexLayer_skipsReadme is the regression for the field report: `saga
+// init` writes a README with no frontmatter into every new layer, so every
+// layer reported failed=1 on every reindex and `saga lint` exited 2 on a store
+// with nothing wrong with it. Six layers, six permanent false failures.
+func TestIndexLayer_skipsReadme(t *testing.T) {
+	db, err := OpenDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	layer := setupProjectLayer(t, "project:demo", map[string]string{
+		"README.md": "# Topic notes for this project live here.\n# No frontmatter, by design.\n",
+		"real.md":   noteWithID("01HXY5KZQVJ8M3R7ABCDEFGHIA", "A real note"),
+	})
+
+	r, err := db.IndexLayer(layer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Failed != 0 {
+		t.Errorf("README counted as a failure: failed=%d, errors=%+v", r.Failed, r.Errors)
+	}
+	if r.Indexed != 1 {
+		t.Errorf("indexed=%d, want 1 (the real note only)", r.Indexed)
+	}
+
+	// A genuinely malformed note must still be reported: the exclusion is for
+	// READMEs, not for "anything that fails to parse".
+	broken := setupProjectLayer(t, "project:broken", map[string]string{
+		"oops.md": "no frontmatter here either\n",
+	})
+	rb, err := db.IndexLayer(broken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rb.Failed != 1 {
+		t.Errorf("a malformed note must still fail: failed=%d", rb.Failed)
+	}
+}

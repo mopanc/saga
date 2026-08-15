@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -364,10 +365,27 @@ func checkContent(cfg *saga.Config) []check {
 			fix:    "ask Claude in any session to read your bio / CV / project docs and call topic_write to populate identity, preferences, policies, and topics",
 		})
 	} else {
+		// Every type present, not a fixed list of the four with specialised
+		// behaviour. The spec registers ten; a store with 414 notes was
+		// reporting four types summing to 367, quietly hiding 47 notes across
+		// decision, runbook, investigation, incident, fact and workflow.
+		types := make([]string, 0, len(counts))
+		for t := range counts {
+			types = append(types, t)
+		}
+		sort.Slice(types, func(i, j int) bool {
+			if counts[types[i]] != counts[types[j]] {
+				return counts[types[i]] > counts[types[j]]
+			}
+			return types[i] < types[j]
+		})
+		parts := make([]string, 0, len(types))
+		for _, t := range types {
+			parts = append(parts, fmt.Sprintf("%s=%d", t, counts[t]))
+		}
 		results = append(results, check{
 			status: statusOK,
-			label: fmt.Sprintf("%d notes — profile=%d preference=%d policy=%d topic=%d",
-				total, counts["profile"], counts["preference"], counts["policy"], counts["topic"]),
+			label:  fmt.Sprintf("%d notes — %s", total, strings.Join(parts, " ")),
 		})
 	}
 

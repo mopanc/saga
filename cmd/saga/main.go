@@ -8,6 +8,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/mopanc/saga/internal/saga"
 )
@@ -48,54 +49,68 @@ func main() {
 	cmd := os.Args[1]
 	args := os.Args[2:]
 
-	var err error
 	switch cmd {
 	case "version", "-v", "--version":
 		fmt.Printf("saga v%s\n", saga.VersionString())
 		return
 	case "help", "-h", "--help":
+		// `saga help <command>` is the form the general usage text tells the
+		// user to run, so it has to work. Per-command help lives in each
+		// command's own flag set, so hand the request there rather than
+		// maintaining a second copy of every command's documentation.
+		if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+			cmd, args = args[0], []string{"--help"}
+			break
+		}
 		fmt.Fprintf(os.Stdout, usage, saga.VersionString())
 		return
-	case "init":
-		err = runInit(args)
-	case "reindex":
-		err = runReindex(args)
-	case "sync":
-		err = runSync(args)
-	case "lembrancas":
-		err = runLembrancas(args)
-	case "gc":
-		err = runGC(args)
-	case "rules":
-		err = runRules(args)
-	case "vault":
-		err = runVault(args)
-	case "conflicts":
-		err = runConflicts(args)
-	case "show":
-		err = runShow(args)
-	case "capabilities":
-		err = runCapabilities(args)
-	case "lint":
-		err = runLint(args)
-	case "doctor":
-		err = runDoctor(args)
-	case "mcp":
-		err = runMCP(args)
-	case "hook":
-		err = runHook(args)
-	case "guard":
-		err = runGuard(args) // fail-silent internally; always returns nil
-	case "setup-claude":
-		err = runSetupClaude(args)
-	default:
-		fmt.Fprintf(os.Stderr, "saga: unknown command %q\n\n", cmd)
-		fmt.Fprintf(os.Stderr, usage, saga.VersionString())
-		os.Exit(2)
 	}
 
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "saga %s: %v\n", cmd, err)
+	if err := dispatch(cmd, args); err != nil {
+		fmt.Fprintf(os.Stderr, "saga: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// dispatch routes a command name to its handler. Separate from main so that
+// `saga help <command>` can re-enter it after rewriting the arguments.
+func dispatch(cmd string, args []string) error {
+	switch cmd {
+	case "init":
+		return runInit(args)
+	case "reindex":
+		return runReindex(args)
+	case "sync":
+		return runSync(args)
+	case "lembrancas":
+		return runLembrancas(args)
+	case "gc":
+		return runGC(args)
+	case "rules":
+		return runRules(args)
+	case "vault":
+		return runVault(args)
+	case "conflicts":
+		return runConflicts(args)
+	case "show":
+		return runShow(args)
+	case "capabilities":
+		return runCapabilities(args)
+	case "lint":
+		return runLint(args)
+	case "doctor":
+		return runDoctor(args)
+	case "mcp":
+		return runMCP(args)
+	case "hook":
+		return runHook(args)
+	case "guard":
+		return runGuard(args) // fail-silent internally; always returns nil
+	case "setup-claude":
+		return runSetupClaude(args)
+	}
+	fmt.Fprintf(os.Stderr, "saga: unknown command %q\n\n", cmd)
+	fmt.Fprintf(os.Stderr, usage, saga.VersionString())
+	os.Exit(2)
+	return nil
 }
