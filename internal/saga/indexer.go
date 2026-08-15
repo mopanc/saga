@@ -162,7 +162,15 @@ func (db *DB) parseFile(path string, layer Layer) (*Topic, []byte, error) {
 // source_layer.
 func (db *DB) persistTopic(topic *Topic, content []byte, path, layerScope string) error {
 	hash := sha256Hex(content)
-	synJSON, err := json.Marshal(topic.Synonyms)
+	// jsonList, not json.Marshal: a nil slice marshals to "null", so an absent
+	// list and an empty one were stored differently. Queries then read as
+	// obviously-correct while being wrong — `WHERE triggers != '[]'` matched
+	// every note that simply had none.
+	synJSON, err := jsonList(topic.Synonyms)
+	if err != nil {
+		return err
+	}
+	trigJSON, err := jsonList(topic.Triggers)
 	if err != nil {
 		return err
 	}
@@ -176,8 +184,9 @@ func (db *DB) persistTopic(topic *Topic, content []byte, path, layerScope string
 		`
 		INSERT INTO topic_index (
 			id, scope, type, title, synonyms, sensitivity, confidence,
-			file_path, file_hash, source_layer, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			file_path, file_hash, source_layer, created_at, updated_at,
+			triggers, enforcement
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			scope        = excluded.scope,
 			type         = excluded.type,
@@ -188,13 +197,16 @@ func (db *DB) persistTopic(topic *Topic, content []byte, path, layerScope string
 			file_path    = excluded.file_path,
 			file_hash    = excluded.file_hash,
 			source_layer = excluded.source_layer,
-			updated_at   = excluded.updated_at
+			updated_at   = excluded.updated_at,
+			triggers     = excluded.triggers,
+			enforcement  = excluded.enforcement
 	`,
-		topic.ID, topic.Scope, topic.Type, topic.Title, string(synJSON),
+		topic.ID, topic.Scope, topic.Type, topic.Title, synJSON,
 		nonEmpty(topic.Sensitivity, "internal"),
 		nonEmpty(topic.Confidence, "proposed"),
 		path, hash, layerScope,
 		topic.CreatedAt.UnixMilli(), topic.UpdatedAt.UnixMilli(),
+		trigJSON, nonEmpty(topic.Enforcement, "advise"),
 	); err != nil {
 		_ = tx.Rollback()
 		return fmt.Errorf("upsert topic_index: %w", err)
@@ -272,4 +284,17 @@ func nonEmpty(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+// jsonList marshals a string slice, rendering nil as an empty JSON array rather
+// than "null" so the column has one representation for "no entries".
+func jsonList(v []string) (string, error) {
+	if v == nil {
+		v = []string{}
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }

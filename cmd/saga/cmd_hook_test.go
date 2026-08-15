@@ -83,7 +83,7 @@ func TestEmitLensBlock_capsLargeBodies(t *testing.T) {
 		{Title: "topic-c", Scope: "personal", FilePath: "/nonexistent-c.md"},
 	}
 	var buf bytes.Buffer
-	emitLensBlock(&buf, cfg, 3, "identity body here", results)
+	emitLensBlock(&buf, cfg, 3, "identity body here", "- **A rule** `[personal]`", results)
 
 	if buf.Len() > maxHookOutputBytes {
 		t.Fatalf("output exceeded hard cap: %d > %d", buf.Len(), maxHookOutputBytes)
@@ -98,17 +98,23 @@ func TestEmitLensBlock_capsLargeBodies(t *testing.T) {
 	if !strings.Contains(got, "<saga-context>") {
 		t.Errorf("expected <saga-context> block")
 	}
+	if !strings.Contains(got, "<saga-rules>") {
+		t.Errorf("expected <saga-rules> block")
+	}
 }
 
 func TestEmitLensBlock_emptyResultsSkipsContextBlock(t *testing.T) {
 	cfg := &saga.Config{DBPath: "/tmp/saga.db"}
 	var buf bytes.Buffer
-	emitLensBlock(&buf, cfg, 0, "", nil)
+	emitLensBlock(&buf, cfg, 0, "", "", nil)
 	if strings.Contains(buf.String(), "<saga-context>") {
 		t.Fatalf("did not expect <saga-context> for empty results, got %q", buf.String())
 	}
 	if strings.Contains(buf.String(), "<saga-identity>") {
 		t.Fatalf("did not expect <saga-identity> for empty baseline, got %q", buf.String())
+	}
+	if strings.Contains(buf.String(), "<saga-rules>") {
+		t.Fatalf("did not expect <saga-rules> for empty catalogue, got %q", buf.String())
 	}
 	if !strings.Contains(buf.String(), "<saga-meta>") {
 		t.Fatalf("expected <saga-meta> always, got %q", buf.String())

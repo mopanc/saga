@@ -134,6 +134,8 @@ A topic is a UTF-8 markdown file consisting of:
 | `sensitivity` | enum | `public`, `internal`, `confidential` (default `internal`) |
 | `tags` | string[] | Free-form labels |
 | `requires` | object | Capability requirements (§8) |
+| `triggers` | string[] | Actions this topic governs (§2.4) — spec 1.1 |
+| `enforcement` | enum | `advise` (default) or `block` (§2.4) — spec 1.1 |
 
 ### 2.3 Body
 
@@ -147,6 +149,58 @@ Content best practices (non-normative):
 - Cite related topics by slug, not by file path.
 
 ---
+
+### 2.4 Activation triggers (spec 1.1)
+
+A topic that states a rule is only useful if it is present at the moment the
+rule applies. Always-on injection does not scale (bodies cost far more than a
+prompt can spare), and lexical retrieval only fires when the wording happens to
+match. `triggers` closes that gap: the topic declares the actions it governs,
+and a conforming engine MUST supply it when such an action is about to occur.
+
+```yaml
+triggers:
+  - "Bash(git commit*)"
+  - "Bash(git push*)"
+enforcement: advise
+```
+
+**Trigger grammar.**
+
+| Form | Matches |
+|---|---|
+| `NAME` | any action with that name, whatever its argument |
+| `NAME(GLOB)` | that name, where `GLOB` matches the action's argument string |
+
+`GLOB` supports `*`, matching any run of characters including none. It is
+anchored at both ends: `git commit*` matches `git commit -m x` and not
+`sudo git commit`. Name comparison is exact and case-sensitive.
+
+**Host neutrality.** An *action identifier* is an opaque string owned by the
+host, not by this spec. A coding agent may present `Bash`, `Edit`, `WebFetch`;
+a clinical host may present `emr.write`; an automotive host may present
+`message.send`. A conforming engine matches patterns against whatever the host
+supplies and MUST NOT interpret what an action means. This keeps the mechanism
+general per the multi-domain design principle, while allowing each host to be
+precise within its own namespace.
+
+Engines MUST document how they derive an action's argument string from a host
+payload, since a trigger glob is written against it.
+
+**`enforcement`.**
+
+| Value | Meaning |
+|---|---|
+| `advise` (default) | Supply the topic alongside the action; the agent proceeds. |
+| `block` | Refuse the action and report which topic refused it. |
+
+`block` is for rules that hold unconditionally. A rule whose applicability
+depends on context the engine cannot evaluate (which project, which client,
+whose account) SHOULD use `advise` and let the agent read the rule and decide,
+rather than deny actions it cannot judge.
+
+Topics without `triggers` are unaffected: they remain reachable through
+retrieval and through whatever always-on surface the engine offers.
 
 ## 3. The three axes of memory
 

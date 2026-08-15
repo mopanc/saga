@@ -20,6 +20,9 @@ func TestApplyHookRegistration_freshFile(t *testing.T) {
 	if !hookFilePresent(t, path, fakeExe+" hook") {
 		t.Errorf("hook not present after fresh write")
 	}
+	if !guardFilePresent(t, path, fakeExe+" guard") {
+		t.Errorf("guard not present after fresh write")
+	}
 	if _, err := os.Stat(path + ".bak"); !os.IsNotExist(err) {
 		t.Errorf("expected no .bak for fresh file, got: %v", err)
 	}
@@ -180,13 +183,19 @@ func TestHookAlreadyWired(t *testing.T) {
 			},
 		},
 	}
-	if !hookAlreadyWired(cfg, "saga", "hook") {
+	if !hookAlreadyWired(cfg, "UserPromptSubmit", "saga", "hook") {
 		t.Error("expected wired=true")
 	}
-	if hookAlreadyWired(cfg, "nonexistent") {
+	if hookAlreadyWired(cfg, "UserPromptSubmit", "nonexistent") {
 		t.Error("expected wired=false for nonexistent substring")
 	}
-	if hookAlreadyWired(map[string]any{}, "saga") {
+	// The same command registered for a different event must not count as wired,
+	// or the guard would never be installed on a machine that already has the
+	// prompt hook.
+	if hookAlreadyWired(cfg, "PreToolUse", "saga") {
+		t.Error("expected wired=false when the event has no entries")
+	}
+	if hookAlreadyWired(map[string]any{}, "UserPromptSubmit", "saga") {
 		t.Error("expected wired=false for empty config")
 	}
 }
@@ -220,5 +229,13 @@ func readJSON(t *testing.T, path string) map[string]any {
 func hookFilePresent(t *testing.T, path, mustContain string) bool {
 	t.Helper()
 	cfg := readJSON(t, path)
-	return hookAlreadyWired(cfg, mustContain)
+	return hookAlreadyWired(cfg, "UserPromptSubmit", mustContain)
+}
+
+// guardFilePresent is hookFilePresent for the PreToolUse event, which carries
+// the rules bound to the action about to run.
+func guardFilePresent(t *testing.T, path, mustContain string) bool {
+	t.Helper()
+	cfg := readJSON(t, path)
+	return hookAlreadyWired(cfg, "PreToolUse", mustContain)
 }

@@ -17,6 +17,8 @@ type Topic struct {
 	Type        string           `yaml:"type"`
 	Title       string           `yaml:"title"`
 	Synonyms    []string         `yaml:"synonyms,omitempty"`
+	Triggers    []string         `yaml:"triggers,omitempty"`
+	Enforcement string           `yaml:"enforcement,omitempty"`
 	Sensitivity string           `yaml:"sensitivity"`
 	Confidence  string           `yaml:"confidence"`
 	CreatedAt   time.Time        `yaml:"created_at"`

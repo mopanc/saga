@@ -24,6 +24,8 @@ Commands:
   sync             Pull/push the personal layer between machines (auto-commit + rebase)
   lembrancas       List recent recall events from the index
   gc               Report (and optionally reclaim) history of topics not in the index
+  rules            List the policy notes in force for the current directory
+  vault            Assemble every layer into one directory for Obsidian
   conflicts        List @conflicts_with topic pairs in active layers
   show             Display a topic plus its incoming and outgoing relations
   capabilities     Print engine capability declaration (spec/types/operators)
@@ -31,6 +33,7 @@ Commands:
   doctor           Diagnose installation, config, and content state
   mcp              Run MCP stdio server (invoked by AI clients)
   hook             Run UserPromptSubmit hook (invoked by Claude Code)
+  guard            Run PreToolUse hook — inject rules that govern the pending action
   setup-claude     Print Claude Code config snippet to wire saga in
 
 Run 'saga help <command>' for command-specific notes.
@@ -63,6 +66,10 @@ func main() {
 		err = runLembrancas(args)
 	case "gc":
 		err = runGC(args)
+	case "rules":
+		err = runRules(args)
+	case "vault":
+		err = runVault(args)
 	case "conflicts":
 		err = runConflicts(args)
 	case "show":
@@ -76,7 +83,9 @@ func main() {
 	case "mcp":
 		err = runMCP(args)
 	case "hook":
-		err = runHook(args) // fail-silent internally; always returns nil
+		err = runHook(args)
+	case "guard":
+		err = runGuard(args) // fail-silent internally; always returns nil
 	case "setup-claude":
 		err = runSetupClaude(args)
 	default:

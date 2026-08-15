@@ -8,9 +8,10 @@ import (
 )
 
 type Config struct {
-	HomeDir           string
-	DBPath            string
-	BaselineMaxTokens int
+	HomeDir              string
+	DBPath               string
+	BaselineMaxTokens    int
+	RuleCatalogMaxTokens int
 }
 
 func LoadConfig() (*Config, error) {
@@ -35,9 +36,17 @@ func LoadConfig() (*Config, error) {
 		}
 	}
 
+	ruleMax := DefaultRuleCatalogMaxTokens
+	if v := os.Getenv("SAGA_RULE_CATALOG_MAX_TOKENS"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			ruleMax = parsed
+		}
+	}
+
 	return &Config{
-		HomeDir:           home,
-		DBPath:            dbPath,
-		BaselineMaxTokens: baselineMax,
+		HomeDir:              home,
+		DBPath:               dbPath,
+		BaselineMaxTokens:    baselineMax,
+		RuleCatalogMaxTokens: ruleMax,
 	}, nil
 }
