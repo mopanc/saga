@@ -166,6 +166,10 @@ func (db *DB) persistTopic(topic *Topic, content []byte, path, layerScope string
 	if err != nil {
 		return err
 	}
+	trigJSON, err := json.Marshal(topic.Triggers)
+	if err != nil {
+		return err
+	}
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -176,8 +180,9 @@ func (db *DB) persistTopic(topic *Topic, content []byte, path, layerScope string
 		`
 		INSERT INTO topic_index (
 			id, scope, type, title, synonyms, sensitivity, confidence,
-			file_path, file_hash, source_layer, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			file_path, file_hash, source_layer, created_at, updated_at,
+			triggers, enforcement
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			scope        = excluded.scope,
 			type         = excluded.type,
@@ -188,13 +193,16 @@ func (db *DB) persistTopic(topic *Topic, content []byte, path, layerScope string
 			file_path    = excluded.file_path,
 			file_hash    = excluded.file_hash,
 			source_layer = excluded.source_layer,
-			updated_at   = excluded.updated_at
+			updated_at   = excluded.updated_at,
+			triggers     = excluded.triggers,
+			enforcement  = excluded.enforcement
 	`,
 		topic.ID, topic.Scope, topic.Type, topic.Title, string(synJSON),
 		nonEmpty(topic.Sensitivity, "internal"),
 		nonEmpty(topic.Confidence, "proposed"),
 		path, hash, layerScope,
 		topic.CreatedAt.UnixMilli(), topic.UpdatedAt.UnixMilli(),
+		string(trigJSON), nonEmpty(topic.Enforcement, "advise"),
 	); err != nil {
 		_ = tx.Rollback()
 		return fmt.Errorf("upsert topic_index: %w", err)

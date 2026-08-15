@@ -145,3 +145,40 @@ func TestBuildRuleCatalog_overflowDropsWholeEntries(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildRuleCatalog_excludesTriggeredRules locks in the efficiency property:
+// a rule bound to an action is delivered by the guard at the moment that action
+// happens, so listing it in the always-on catalogue too is redundant spend on
+// every prompt. The always-on cost therefore falls as rules gain triggers,
+// instead of growing with the store.
+func TestBuildRuleCatalog_excludesTriggeredRules(t *testing.T) {
+	svc, db := setupServiceTest(t)
+
+	layer := setupProjectLayer(t, "personal", map[string]string{
+		"triggered.md": triggeredNote("01HXY5KZQVJ8M3R7ABCDEFGH01", "personal",
+			"Bound to git commits", "", []string{"Bash(git commit*)"}),
+		"general.md": triggeredNote("01HXY5KZQVJ8M3R7ABCDEFGH02", "personal",
+			"Not bound to any action", "", nil),
+	})
+	if _, err := db.IndexLayer(layer); err != nil {
+		t.Fatal(err)
+	}
+
+	out, ids, err := svc.BuildRuleCatalog(700)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 {
+		t.Fatalf("catalogue listed %d rules, want 1 (the untriggered one)", len(ids))
+	}
+	if strings.Contains(out, "Bound to git commits") {
+		t.Error("a triggered rule was listed in the catalogue as well as being guard-delivered")
+	}
+	if !strings.Contains(out, "Not bound to any action") {
+		t.Error("the untriggered rule must still be listed; nothing else delivers it")
+	}
+	// Silence about the omitted rules would read as "these are all your rules".
+	if !strings.Contains(out, "bound to specific actions") {
+		t.Error("catalogue must account for the rules it deliberately omitted")
+	}
+}

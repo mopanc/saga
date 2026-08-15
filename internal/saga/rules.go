@@ -46,14 +46,34 @@ func (s *Service) BuildRuleCatalog(maxTokens int) (string, []string, error) {
 	if err != nil {
 		return "", nil, fmt.Errorf("resolve layers: %w", err)
 	}
+	// Most specific layer first: rules from the project you are standing in are
+	// likelier to bear on the work than broad personal ones, and if the budget
+	// forces a drop it should fall on the general end.
 	scopes := make([]string, 0, len(layers))
-	for _, l := range layers {
-		scopes = append(scopes, l.Scope)
+	for i := len(layers) - 1; i >= 0; i-- {
+		scopes = append(scopes, layers[i].Scope)
 	}
 
-	policies, err := s.notesByScopesAndType(scopes, []string{"policy"})
+	all, err := s.notesByScopesAndType(scopes, []string{"policy"})
 	if err != nil {
 		return "", nil, fmt.Errorf("query policy notes: %w", err)
+	}
+
+	// A rule that declares `triggers` is delivered by the guard at the moment
+	// the action it governs happens, so listing it here as well is redundant
+	// spend on every prompt. The catalogue carries the remainder: rules that
+	// cannot be tied to an action and therefore have no deterministic delivery.
+	//
+	// This makes the always-on cost fall as rules gain triggers, rather than
+	// grow with the store.
+	policies := make([]*Topic, 0, len(all))
+	deterministic := 0
+	for _, t := range all {
+		if len(t.Triggers) > 0 {
+			deterministic++
+			continue
+		}
+		policies = append(policies, t)
 	}
 	if len(policies) == 0 {
 		return "", nil, nil
@@ -64,7 +84,12 @@ func (s *Service) BuildRuleCatalog(maxTokens int) (string, []string, error) {
 	sb.WriteString("These are rules the user has written and expects followed. " +
 		"Listed by name and trigger phrases only. Before acting on anything one " +
 		"of them covers, read it in full with topic_read — do not act from the " +
-		"summary line.\n\n")
+		"summary line.\n")
+	if deterministic > 0 {
+		fmt.Fprintf(&sb, "\n%d further rule(s) are bound to specific actions and will be "+
+			"delivered when those actions occur; they are not listed here.\n", deterministic)
+	}
+	sb.WriteString("\n")
 
 	// Truncate entry-wise, never by character boundary. The catalogue is a list
 	// whose entries are individually meaningful: cutting it at the last

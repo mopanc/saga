@@ -32,6 +32,7 @@ Commands:
   doctor           Diagnose installation, config, and content state
   mcp              Run MCP stdio server (invoked by AI clients)
   hook             Run UserPromptSubmit hook (invoked by Claude Code)
+  guard            Run PreToolUse hook — inject rules that govern the pending action
   setup-claude     Print Claude Code config snippet to wire saga in
 
 Run 'saga help <command>' for command-specific notes.
@@ -79,7 +80,9 @@ func main() {
 	case "mcp":
 		err = runMCP(args)
 	case "hook":
-		err = runHook(args) // fail-silent internally; always returns nil
+		err = runHook(args)
+	case "guard":
+		err = runGuard(args) // fail-silent internally; always returns nil
 	case "setup-claude":
 		err = runSetupClaude(args)
 	default:

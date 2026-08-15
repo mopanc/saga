@@ -40,6 +40,12 @@ func runSetupClaude(args []string) error {
 
 	hookSnippet := fmt.Sprintf(`{
   "hooks": {
+    "PreToolUse": [{
+      "hooks": [{
+        "type": "command",
+        "command": "%s guard"
+      }]
+    }],
     "UserPromptSubmit": [{
       "hooks": [{
         "type": "command",
@@ -48,7 +54,7 @@ func runSetupClaude(args []string) error {
     }]
   }
 }
-`, exe+" hook")
+`, exe, exe+" hook")
 
 	mcpCmd := fmt.Sprintf("claude mcp add saga -s user -- %s mcp", exe)
 
@@ -108,8 +114,6 @@ func runSetupClaude(args []string) error {
 //   - Writes the previous content to settings.json.bak before mutating.
 //   - Atomic rename via .tmp; never leaves the file half-written.
 func applyHookRegistration(exe, settingsPath string) error {
-	hookCmd := exe + " hook"
-
 	var existing []byte
 	data, err := os.ReadFile(settingsPath) // #nosec G304 -- settingsPath is the user's own ~/.claude/settings.json, derived from os.UserHomeDir()
 	if err != nil && !os.IsNotExist(err) {
@@ -124,28 +128,42 @@ func applyHookRegistration(exe, settingsPath string) error {
 		}
 	}
 
-	if hookAlreadyWired(cfg, "saga", "hook") {
-		fmt.Println("(UserPromptSubmit hook already wired to saga — leaving as-is)")
-		return nil
+	// Two events, two jobs. UserPromptSubmit carries identity, the rule
+	// catalogue and query-matched topics. PreToolUse carries the rules bound to
+	// the action about to run — the deterministic half, which does not depend on
+	// the model noticing a catalogue entry applies.
+	wanted := []struct {
+		event, command, marker string
+	}{
+		{"UserPromptSubmit", exe + " hook", "hook"},
+		{"PreToolUse", exe + " guard", "guard"},
 	}
 
 	hooks, _ := cfg["hooks"].(map[string]any)
 	if hooks == nil {
 		hooks = map[string]any{}
 	}
-	userPrompts, _ := hooks["UserPromptSubmit"].([]any)
 
-	newGroup := map[string]any{
-		"hooks": []any{
-			map[string]any{
-				"type":    "command",
-				"command": hookCmd,
+	added := 0
+	for _, w := range wanted {
+		if hookAlreadyWired(cfg, w.event, "saga", w.marker) {
+			fmt.Printf("(%s hook already wired to saga — leaving as-is)\n", w.event)
+			continue
+		}
+		entries, _ := hooks[w.event].([]any)
+		entries = append(entries, map[string]any{
+			"hooks": []any{
+				map[string]any{"type": "command", "command": w.command},
 			},
-		},
+		})
+		hooks[w.event] = entries
+		added++
 	}
-	userPrompts = append(userPrompts, newGroup)
-	hooks["UserPromptSubmit"] = userPrompts
 	cfg["hooks"] = hooks
+
+	if added == 0 {
+		return nil
+	}
 
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
 		return fmt.Errorf("mkdir %s: %w", filepath.Dir(settingsPath), err)
@@ -173,20 +191,20 @@ func applyHookRegistration(exe, settingsPath string) error {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("rename: %w", err)
 	}
-	fmt.Printf("UserPromptSubmit hook merged into %s.\n", settingsPath)
+	fmt.Printf("%d hook(s) merged into %s.\n", added, settingsPath)
 	return nil
 }
 
-// hookAlreadyWired reports whether any UserPromptSubmit hook entry has a
+// hookAlreadyWired reports whether any hook entry registered for `event` has a
 // command containing all of the given substrings. Used to make
 // applyHookRegistration idempotent without coupling to the exact binary path
 // (the user may have installed saga from a different location).
-func hookAlreadyWired(cfg map[string]any, mustContain ...string) bool {
+func hookAlreadyWired(cfg map[string]any, event string, mustContain ...string) bool {
 	hooks, ok := cfg["hooks"].(map[string]any)
 	if !ok {
 		return false
 	}
-	userPrompts, ok := hooks["UserPromptSubmit"].([]any)
+	userPrompts, ok := hooks[event].([]any)
 	if !ok {
 		return false
 	}
