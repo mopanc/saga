@@ -92,7 +92,13 @@ func TestLogLembrancas_nilQueryAndCwdStoredAsNull(t *testing.T) {
 	}
 }
 
-func TestLogLembrancas_cascadeDeleteWithTopic(t *testing.T) {
+// TestLogLembrancas_survivesTopicDelete replaces an earlier test that asserted
+// the opposite (cascade-delete). That behaviour was the #95 data-loss bug: the
+// indexer drops an index row both when a note is deleted and when it moves to
+// another layer, so cascading meant every cross-layer move destroyed the note's
+// usage history. Migration 005 removed the FK; history now outlives the index
+// row and is reclaimed explicitly via `saga gc`.
+func TestLogLembrancas_survivesTopicDelete(t *testing.T) {
 	svc, db := setupServiceTest(t)
 	r, err := svc.TopicWrite(TopicWriteArgs{
 		Name: "x", Scope: "personal", Type: "topic", Body: "body",
@@ -104,7 +110,6 @@ func TestLogLembrancas_cascadeDeleteWithTopic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Delete the topic — lembranças should cascade
 	if _, err := db.Exec("DELETE FROM topic_index WHERE id = ?", r.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -113,8 +118,8 @@ func TestLogLembrancas_cascadeDeleteWithTopic(t *testing.T) {
 	if err := db.QueryRow("SELECT COUNT(*) FROM lembranca WHERE topic_id = ?", r.ID).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 0 {
-		t.Errorf("expected cascade-delete, got %d remaining lembranças", count)
+	if count != 1 {
+		t.Errorf("lembrança did not survive topic delete: got %d, want 1", count)
 	}
 }
 

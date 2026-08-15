@@ -16,9 +16,19 @@ coverage.html
 *.db-wal
 *.db-shm
 
-# Saga sensitive project-layer topics — keep out of public repo
-# (e.g., security audit findings, internal release plans)
-.saga/topics/security-*.md
+# Saga project-layer notes are private for now. The project layer is designed
+# for team use, but today saga is single-user: notes here are working memory,
+# not documentation. Revisit if/when saga becomes a team tool.
+# meta.yml and the topics README stay tracked so a clone still has a layer
+# definition and an explanation of what belongs here.
+.saga/topics/*.md
+!.saga/topics/README.md
+
+# Internal working docs — contain client/project names and work-PC paths.
+# NEVER commit to this public repo.
+/saga-estudo-utilizacao-*.md
+/saga-plano-melhorias-*.md
+/HANDOVER-*.md
 
 # OS
 .DS_Store

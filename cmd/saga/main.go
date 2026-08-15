@@ -23,6 +23,7 @@ Commands:
   reindex          Rebuild SQLite index from markdown in active layers
   sync             Pull/push the personal layer between machines (auto-commit + rebase)
   lembrancas       List recent recall events from the index
+  gc               Report (and optionally reclaim) history of topics not in the index
   conflicts        List @conflicts_with topic pairs in active layers
   show             Display a topic plus its incoming and outgoing relations
   capabilities     Print engine capability declaration (spec/types/operators)
@@ -60,6 +61,8 @@ func main() {
 		err = runSync(args)
 	case "lembrancas":
 		err = runLembrancas(args)
+	case "gc":
+		err = runGC(args)
 	case "conflicts":
 		err = runConflicts(args)
 	case "show":
