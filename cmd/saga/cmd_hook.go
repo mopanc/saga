@@ -211,7 +211,7 @@ func truncateTopicBody(body string, maxChars int) string {
 	if len(body) <= maxChars {
 		return body
 	}
-	cut := body[:maxChars]
+	cut := saga.TrimToRuneBoundary(body[:maxChars])
 	if idx := strings.LastIndex(cut, "\n\n"); idx > 0 {
 		return strings.TrimRight(body[:idx], "\n") + truncationMarker
 	}
@@ -231,11 +231,58 @@ func capHookOutput(out []byte, maxBytes int) []byte {
 	if len(out) <= maxBytes {
 		return out
 	}
-	trimmed := out[:maxBytes]
+
+	notice := []byte("<!-- saga: hook output capped at " + fmt.Sprint(maxBytes) + " bytes; some context omitted -->\n")
+
+	// Reserve room for the notice and for closing whatever sections the cut
+	// lands inside. Appending them after trimming to maxBytes is what pushed
+	// the real output past the cap it announces.
+	budget := maxBytes - len(notice) - maxClosingTagsBytes
+	if budget < 0 {
+		budget = 0
+	}
+
+	trimmed := out[:budget]
 	if idx := bytes.LastIndexByte(trimmed, '\n'); idx > 0 {
 		trimmed = trimmed[:idx+1]
 	}
-	return append(trimmed, []byte("<!-- saga: hook output capped at "+fmt.Sprint(maxBytes)+" bytes; some context omitted -->\n")...)
+	trimmed = []byte(saga.TrimToRuneBoundary(string(trimmed)))
+
+	// Build a fresh slice: appending to `trimmed` would write into the caller's
+	// backing array, and closingTagsFor must read the trimmed content, not the
+	// content plus whatever was just appended to it.
+	out = make([]byte, 0, len(trimmed)+len(notice)+maxClosingTagsBytes)
+	out = append(out, trimmed...)
+	out = append(out, notice...)
+	return append(out, closingTagsFor(trimmed)...)
+}
+
+// hookSections are the blocks emitLensBlock can open, in emission order.
+var hookSections = []string{"saga-meta", "saga-identity", "saga-rules", "saga-context"}
+
+// maxClosingTagsBytes bounds what closingTagsFor can append, so capHookOutput
+// can reserve room for it up front.
+var maxClosingTagsBytes = func() int {
+	n := 0
+	for _, s := range hookSections {
+		n += len(s) + len("</>\n")
+	}
+	return n
+}()
+
+// closingTagsFor returns the closing tags for any section left open by a
+// truncation. A cut through <saga-context> used to emit an opening tag with no
+// closer, handing the client malformed markup on every capped prompt.
+func closingTagsFor(out []byte) []byte {
+	var closers []byte
+	for _, name := range hookSections {
+		open := bytes.Count(out, []byte("<"+name+">"))
+		closed := bytes.Count(out, []byte("</"+name+">"))
+		for i := 0; i < open-closed; i++ {
+			closers = append(closers, []byte("</"+name+">\n")...)
+		}
+	}
+	return closers
 }
 
 // emitMetaBlock writes the bootstrap <saga-meta> block. Cheap (~80 tokens),

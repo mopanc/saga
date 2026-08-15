@@ -3,6 +3,7 @@ package saga
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestBuildIdentityBaseline_emptyReturnsEmpty(t *testing.T) {
@@ -239,5 +240,62 @@ func TestAllocateShares_surplusRedistributed(t *testing.T) {
 	total := shares["short"] + shares["long1"] + shares["long2"]
 	if total > 300 {
 		t.Errorf("shares overran budget: %d > 300", total)
+	}
+}
+
+// TestTruncateAtBoundary_neverSplitsRunes is the regression for the field
+// report: maxChars counts bytes, and slicing bytes through a multi-byte rune
+// emitted invalid UTF-8 to the client on every prompt. A "ç" (\xc3\xa7) became
+// a lone \xc3.
+func TestTruncateAtBoundary_neverSplitsRunes(t *testing.T) {
+	// No newlines, so the cut lands mid-line and must fall back to a rune
+	// boundary rather than a raw byte slice.
+	text := strings.Repeat("Comunicação e configuração ", 40)
+
+	for maxChars := 1; maxChars < 200; maxChars++ {
+		got := truncateAtBoundary(text, maxChars)
+		if !utf8.ValidString(got) {
+			t.Fatalf("maxChars=%d produced invalid UTF-8: %q", maxChars, got)
+		}
+	}
+}
+
+func TestTrimToRuneBoundary(t *testing.T) {
+	full := "ç"
+	if len(full) != 2 {
+		t.Fatalf("setup: expected a 2-byte rune, got %d", len(full))
+	}
+	if got := TrimToRuneBoundary(full[:1]); got != "" {
+		t.Errorf("half a rune should be dropped entirely, got %q", got)
+	}
+	if got := TrimToRuneBoundary("abc"); got != "abc" {
+		t.Errorf("intact string was modified: %q", got)
+	}
+	if got := TrimToRuneBoundary("aç"); got != "aç" {
+		t.Errorf("string ending on a boundary was modified: %q", got)
+	}
+}
+
+// TestBuildIdentityBaseline_outputIsValidUTF8 covers the same defect end to
+// end, since that is how it reached the client.
+func TestBuildIdentityBaseline_outputIsValidUTF8(t *testing.T) {
+	svc, _ := setupServiceTest(t)
+	for _, n := range []string{"a", "b", "c"} {
+		if _, err := svc.TopicWrite(TopicWriteArgs{
+			Name: "pref-" + n, Scope: "personal", Type: "preference",
+			Title: "Comunicação " + n,
+			Body:  strings.Repeat("configuração e comunicação sem quebras de linha ", 60),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for budget := 20; budget <= 400; budget += 7 {
+		out, _, err := svc.BuildIdentityBaseline(budget)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !utf8.ValidString(out) {
+			t.Fatalf("baseline at budget=%d is not valid UTF-8", budget)
+		}
 	}
 }

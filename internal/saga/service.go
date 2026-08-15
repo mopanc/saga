@@ -726,7 +726,7 @@ func (s *Service) TopicWrite(args TopicWriteArgs) (*TopicWriteResult, error) {
 			warning = &TopicWriteWarning{
 				Kind:       "similar_topic_found",
 				Candidates: candidates,
-				Hint:       "consider @supersedes <id> | @refines <id> | proceed if genuinely new (set force_duplicate=true to suppress)",
+				Hint:       "to link them, add a relations: entry in the new note's YAML frontmatter — e.g. `relations:\\n  - op: supersedes\\n    target: <id>` (also refines, derived_from, conflicts_with). Writing @supersedes in the body has no effect. Or proceed if genuinely new: set force_duplicate=true to suppress",
 			}
 		}
 	}

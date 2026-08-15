@@ -65,6 +65,13 @@ func (db *DB) IndexLayer(layer Layer) (*IndexResult, error) {
 			if d.IsDir() || !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
 				return nil
 			}
+			// A README explains a directory, it is not content of it. `saga
+			// init` writes one into every new layer, so counting it as a parse
+			// failure left every layer permanently reporting failed=1 and made
+			// `saga lint` exit 2 on a store with nothing wrong with it.
+			if strings.EqualFold(d.Name(), "README.md") {
+				return nil
+			}
 			topic, content, err := db.parseFile(path, layer)
 			if err != nil {
 				result.Failed++

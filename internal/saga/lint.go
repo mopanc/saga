@@ -125,6 +125,11 @@ func Lint(layers []Layer, opts LintOptions) (*LintReport, error) {
 				}
 				return err
 			}
+			// Same exclusion as the indexer: a README explains the directory,
+			// it is not a note in it.
+			if strings.EqualFold(d.Name(), "README.md") {
+				return nil
+			}
 			if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
 				return nil
 			}
