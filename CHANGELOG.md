@@ -10,6 +10,79 @@ goreleaser-generated commit-level changelog and signed checksums.
 
 ## [Unreleased]
 
+## [1.0.0-rc.5] — 2026-08-15
+
+### Fixed
+- **Critical data loss: moving a note between layers destroyed its usage
+  history.** Filing a personal note into a project layer (same `id`, new
+  `scope`) wiped every `lembranca` row for it. `pruneUnseenTopics` drops index
+  rows for notes no longer on disk *in that layer*, and from inside one layer's
+  pass a deleted note and a moved one are indistinguishable; `ON DELETE
+  CASCADE` then took the history before the destination layer re-inserted the
+  same id. Found by dogfooding: 8 notes moved, 76 rows lost, recovered only
+  because a backup existed.
+
+  Migration 005 rebuilds `lembranca` without the foreign key. The relationship
+  was backwards: `topic_index` is a derived cache that `saga reindex` rebuilds
+  from the `.md` files, while `lembranca` is an append-only record of what
+  happened, reconstructible from nothing. `ON DELETE SET NULL` was rejected
+  because `topic_id` is the only handle back to the note, and nulling it
+  discards exactly what is needed to reconnect history when the note reappears
+  under a new layer. This is the third member of the family after the two
+  cascade bugs fixed in rc.3, and closes the design question left open in
+  `002_lembrancas.sql`.
+- **Empty `synonyms` and `triggers` were stored as `null`, not `[]`.**
+  `json.Marshal` of a nil slice yields `"null"`, so a note with no entries and
+  one with an empty list were stored differently, and queries of the obvious
+  form (`WHERE triggers != '[]'`) read as correct while matching every note
+  that simply had none. Existing rows normalise on the next reindex.
+
+### Added
+- **Always-on rule catalogue.** `policy` notes were invisible to the always-on
+  path, which queried `profile` + `preference` only, so a rule reached the model
+  only when a prompt happened to match it lexically. Rules the user had written
+  were therefore broken in silence. The hook now emits `<saga-rules>`: an index
+  of every policy in force for the working directory, by name and trigger
+  phrase, with the bodies left to `topic_read`. Pointers rather than content —
+  the bodies would cost roughly ten times as much on every prompt.
+- **Activation triggers (spec 1.1).** A topic can declare `triggers` — patterns
+  over host-supplied action identifiers — and `enforcement` (`advise` or
+  `block`). Documented in §2.4 of the topic spec as backward-compatible v1.x
+  additions. Deliberately host-neutral: an action identifier is an opaque
+  string owned by the host, so the same mechanism serves a coding agent
+  (`Bash(git commit*)`) and any other domain (`emr.write(patient/*)`). The
+  engine matches patterns and never interprets what an action means.
+- **`saga guard`**, a `PreToolUse` hook that supplies the rules governing the
+  action about to run, or denies it when a matching rule declares
+  `enforcement: block`. Deterministic where the catalogue depends on attention,
+  and free when nothing matches. A rule delivered this way drops out of the
+  catalogue, so the always-on cost falls as coverage improves instead of growing
+  with the store. `saga setup-claude` now registers both hook events.
+- **`saga vault`**, assembling every layer into one directory that opens as a
+  single Obsidian vault: one graph across personal and every project, rather
+  than a graph per repository. Symlinks, not copies, so the notes stay where
+  they are and saga remains the only writer of record. Refuses to replace
+  anything that is not already a symlink.
+- **`saga rules`** lists the policies in force, with `--budget` to reproduce
+  exactly what the hook injects.
+- **`saga gc`** reports usage history whose topic is no longer indexed, and
+  deletes only topic ids handed to it explicitly. Blind pruning is deliberately
+  absent: a note filed in a layer that is inactive in the current directory is
+  indistinguishable from a deleted one.
+
+### Changed
+- **The identity baseline now represents every note instead of the first few.**
+  Nine notes totalling ~17.9k characters were concatenated and cut at a 400-token
+  cap, so the first profile note consumed the whole budget and every
+  `preference` note was dropped — stated preferences had never reached the
+  model. Each note now receives a share of the budget, surplus from short notes
+  is redistributed, and each is cut at a paragraph boundary. Measured on a real
+  store: 9 of 9 notes present, in fewer characters than before.
+- The rule catalogue and the baseline hold separate budgets. Sharing one is how
+  policies became invisible in the first place.
+
+## [1.0.0-rc.4] — 2026-07-24
+
 ### Fixed
 - **Reindex regression introduced in rc.3: a note that kept its title but
   changed id vanished from the index.** The rc.3 reindex upserted by id and
