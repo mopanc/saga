@@ -24,6 +24,7 @@ Commands:
   sync             Pull/push the personal layer between machines (auto-commit + rebase)
   lembrancas       List recent recall events from the index
   gc               Report (and optionally reclaim) history of topics not in the index
+  rules            List the policy notes in force for the current directory
   conflicts        List @conflicts_with topic pairs in active layers
   show             Display a topic plus its incoming and outgoing relations
   capabilities     Print engine capability declaration (spec/types/operators)
@@ -63,6 +64,8 @@ func main() {
 		err = runLembrancas(args)
 	case "gc":
 		err = runGC(args)
+	case "rules":
+		err = runRules(args)
 	case "conflicts":
 		err = runConflicts(args)
 	case "show":

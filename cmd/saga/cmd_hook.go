@@ -105,18 +105,32 @@ func runHookInner() error {
 		baselineIDs = nil
 	}
 
+	// Always-on rule catalogue: the index of `policy` notes in force for this
+	// cwd. Separate budget from the identity baseline — rules and identity
+	// should never compete for the same tokens, which is how policies ended up
+	// invisible in the first place.
+	rules, ruleIDs, err := svc.BuildRuleCatalog(cfg.RuleCatalogMaxTokens)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "saga hook: rules: %v\n", err)
+		rules = ""
+		ruleIDs = nil
+	}
+
 	// Topic-relevance recall (existing F3.b path).
 	results, err := svc.Recall(saga.RecallArgs{Query: event.Prompt, K: hookTopK})
 	if err != nil {
 		return err
 	}
 
-	emitLensBlock(os.Stdout, cfg, noteCount, baseline, results)
+	emitLensBlock(os.Stdout, cfg, noteCount, baseline, rules, results)
 
 	// Log lembranças for both injection paths. Best-effort — failures
 	// are silent; we never block the prompt on logging issues.
 	if len(baselineIDs) > 0 {
 		_ = svc.LogLembrancas(baselineIDs, saga.LembrancaKindBaseline, "")
+	}
+	if len(ruleIDs) > 0 {
+		_ = svc.LogLembrancas(ruleIDs, saga.LembrancaKindBaseline, "")
 	}
 	if len(results) > 0 {
 		ids := make([]string, len(results))
@@ -137,6 +151,8 @@ func runHookInner() error {
 //     all and the model has no way to discover that saga exists.
 //   - <saga-identity> when there is a non-empty baseline (profile/preference
 //     notes exist).
+//   - <saga-rules> when the active layers hold any `policy` note. Emitted
+//     before <saga-context> so rules are in scope before recalled material.
 //   - <saga-context> when there are query-matched topics.
 //
 // The whole block is assembled into a buffer first so we can enforce
@@ -144,7 +160,7 @@ func runHookInner() error {
 // Claude Code's stdout truncation threshold. Per-topic bodies are also
 // individually capped via truncateTopicBody so a single oversized topic
 // can't starve the others.
-func emitLensBlock(w io.Writer, cfg *saga.Config, noteCount int, baseline string, results []saga.TopicSnippet) {
+func emitLensBlock(w io.Writer, cfg *saga.Config, noteCount int, baseline, rules string, results []saga.TopicSnippet) {
 	var buf bytes.Buffer
 	emitMetaBlock(&buf, cfg, noteCount)
 
@@ -152,6 +168,12 @@ func emitLensBlock(w io.Writer, cfg *saga.Config, noteCount int, baseline string
 		fmt.Fprintln(&buf, "<saga-identity>")
 		fmt.Fprintln(&buf, baseline)
 		fmt.Fprintln(&buf, "</saga-identity>")
+	}
+
+	if rules != "" {
+		fmt.Fprintln(&buf, "<saga-rules>")
+		fmt.Fprintln(&buf, rules)
+		fmt.Fprintln(&buf, "</saga-rules>")
 	}
 
 	if len(results) > 0 {

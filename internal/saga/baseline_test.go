@@ -172,48 +172,72 @@ func TestBuildIdentityBaseline_ignoresOtherScopes(t *testing.T) {
 	}
 }
 
-func TestTruncateAtSection(t *testing.T) {
-	cases := []struct {
-		name      string
-		text      string
-		maxTokens int
-		want      string
-	}{
-		{
-			name:      "under_limit_unchanged",
-			text:      "small",
-			maxTokens: 100,
-			want:      "small",
-		},
-		{
-			name:      "cuts_at_last_paragraph_within_budget",
-			text:      "para1.\n\npara2.\n\npara3.\n\npara4.",
-			maxTokens: 4, // 16 char budget; cut="para1.\n\npara2.\n\n"; last \n\n at idx 14
-			want:      "para1.\n\npara2.",
-		},
-		{
-			name:      "falls_back_to_line_boundary",
-			text:      "line1\nline2\nline3\nline4",
-			maxTokens: 3, // 12 char budget; cut="line1\nline2\n"; no \n\n; last \n at idx 11
-			want:      "line1\nline2",
-		},
-		{
-			name:      "hard_cut_when_no_boundaries",
-			text:      "abcdefghij",
-			maxTokens: 1, // 4 char budget; no newlines anywhere
-			want:      "abcd",
-		},
+func TestBuildIdentityBaseline_everyNoteRepresented(t *testing.T) {
+	svc, _ := setupServiceTest(t)
+
+	long := strings.Repeat("Profile detail paragraph.\n\n", 200) // ~5.4k chars
+	if _, err := svc.TopicWrite(TopicWriteArgs{
+		Name: "profile-jorge", Scope: "personal", Type: "profile",
+		Title: "Who I am", Body: long,
+	}); err != nil {
+		t.Fatal(err)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := truncateAtSection(tc.text, tc.maxTokens)
-			if got != tc.want {
-				t.Errorf("got %q\nwant %q", got, tc.want)
-			}
-			// Result must be a prefix of the input (after trimming).
-			if !strings.HasPrefix(tc.text, strings.TrimRight(got, "\n")) {
-				t.Errorf("truncated output is not a prefix of input")
-			}
-		})
+	for _, n := range []string{"pref-voice", "pref-typography", "pref-language"} {
+		if _, err := svc.TopicWrite(TopicWriteArgs{
+			Name: n, Scope: "personal", Type: "preference",
+			Title: n, Body: "MARKER-" + n + "\n\n" + strings.Repeat("filler.\n\n", 100),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out, ids, err := svc.BuildIdentityBaseline(400)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 4 {
+		t.Fatalf("contributing ids = %d, want 4", len(ids))
+	}
+	for _, n := range []string{"pref-voice", "pref-typography", "pref-language"} {
+		if !strings.Contains(out, "MARKER-"+n) {
+			t.Errorf("preference %q was dropped entirely from the baseline", n)
+		}
+	}
+	if !strings.Contains(out, "Profile detail paragraph.") {
+		t.Error("profile note missing from baseline")
+	}
+	// Every note must render its own section. Counting them catches the
+	// header-overhead bug: budgeting the bodies against the full allowance and
+	// then character-capping the finished render pushed the last note off the
+	// end, so 9 notes emitted 8 sections.
+	if got := strings.Count(out, "## "); got != 4 {
+		t.Errorf("rendered %d note sections, want 4 (one per note)", got)
+	}
+	if len(out) > 400*4*2 {
+		t.Errorf("baseline overran its budget: %d chars", len(out))
+	}
+}
+
+func TestAllocateShares_surplusRedistributed(t *testing.T) {
+	notes := []*Topic{
+		{ID: "short", Body: "tiny"},
+		{ID: "long1", Body: strings.Repeat("x", 1000)},
+		{ID: "long2", Body: strings.Repeat("y", 1000)},
+	}
+	shares := allocateShares(notes, 300)
+
+	if shares["short"] != 4 {
+		t.Errorf("short note share = %d, want its full 4 chars", shares["short"])
+	}
+	// The 296 chars the short note did not need go to the two long ones.
+	if shares["long1"] != shares["long2"] {
+		t.Errorf("long notes got unequal shares: %d vs %d", shares["long1"], shares["long2"])
+	}
+	if shares["long1"] < 140 {
+		t.Errorf("surplus was not redistributed: long share = %d, want ~148", shares["long1"])
+	}
+	total := shares["short"] + shares["long1"] + shares["long2"]
+	if total > 300 {
+		t.Errorf("shares overran budget: %d > 300", total)
 	}
 }
