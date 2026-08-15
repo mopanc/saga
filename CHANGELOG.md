@@ -10,6 +10,41 @@ goreleaser-generated commit-level changelog and signed checksums.
 
 ## [Unreleased]
 
+## [1.0.0-rc.6] — 2026-08-15
+
+Six defects found running rc.5 against a 414-note store, all reproduced before
+being fixed.
+
+### Fixed
+- **The hook emitted invalid UTF-8 on every prompt.** Truncation cut at a byte
+  offset, and where no newline sat above the budget the fallback sliced through
+  a multi-byte rune: `Comunicação` became `Comunica\xc3`, a lone leading byte.
+  Cuts now back up to a rune boundary. Introduced by the fair-share identity
+  baseline in rc.5, so it shipped and broke within hours; the end-to-end check
+  that catches it is piping `saga hook` to a strict UTF-8 decode.
+- **`<saga-context>` was left unclosed whenever the output cap fired**, handing
+  the client malformed markup. The cap trims raw bytes, which can land inside
+  any section; the closers for whatever the cut left open are now appended.
+- **The hook overran the byte cap it announces** (8250 against 8192), because
+  the truncation notice was appended after trimming to the limit. The notice and
+  the closing tags are now reserved before trimming.
+- **`saga doctor` under-reported the store.** The Content line printed a fixed
+  list of the four types with specialised behaviour, so a 414-note store showed
+  four counts summing to 367 and said nothing about the other 47 notes across
+  `decision`, `runbook`, `investigation`, `incident`, `fact` and `workflow`.
+  Every type present is now listed, commonest first.
+- **`saga help <command>` printed the general usage** — the exact form the
+  general usage recommends. It now hands the request to that command's own flag
+  set, so each command documents itself once.
+- **`saga init` wrote a README with no frontmatter into every new layer**, so
+  every layer reported `failed=1` on every reindex and `saga lint` exited 2 on a
+  store with nothing wrong with it. The indexer and the linter now skip
+  `README.md`: a README explains a directory, it is not content of it. A
+  genuinely malformed note still fails.
+- **The duplicate-topic warning suggested a syntax that does nothing.** It
+  recommended `@supersedes <id>`, which is silently ignored in a note body;
+  relations live in frontmatter. The hint now shows the YAML.
+
 ## [1.0.0-rc.5] — 2026-08-15
 
 ### Fixed
